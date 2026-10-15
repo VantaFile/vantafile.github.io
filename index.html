@@ -1,0 +1,2916 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VantaFile · Gestor de archivos</title>
+  <script>
+    // Aplicar el tema guardado antes de pintar, para evitar un parpadeo al cargar.
+    // Sin preferencia guardada se usa la del sistema operativo.
+    (function () {
+      let tema = null;
+      try { tema = localStorage.getItem('tema'); } catch (e) {}
+      const prefiereClaro = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      if (tema === 'claro' || (tema === null && prefiereClaro)) {
+        document.documentElement.classList.remove('dark');
+      }
+    })();
+  </script>
+  <!-- Tipografía:
+       Playfair Display (nombre y títulos, serif formal de alto contraste),
+       DM Sans (texto e interfaz), DM Mono (detalles) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
+            // Títulos y nombre comparten familia para que nada compita con la marca;
+            // los títulos usan un peso más ligero que el nombre.
+            display: ['"Playfair Display"', 'Georgia', 'serif'],
+            marca: ['"Playfair Display"', 'Georgia', 'serif'],
+            mono: ['"DM Mono"', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            brand: {
+              pale: '#FFD0B3',
+              orange: '#FFA777',
+              cream: '#F8F6F4',
+              slate: '#D7DDE3',
+              darkBg: '#121316',
+              darkSurface: '#1A1B1E',
+              darkBorder: '#2D2F33'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .font-display { letter-spacing: -0.01em; }
+
+    /* Transiciones suaves entre temas */
+    *, ::before, ::after {
+      transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2D2F33;
+      border-radius: 3px;
+    }
+
+    /* Curva de salida suave usada en todas las animaciones */
+    :root { --ease-suave: cubic-bezier(0.22, 1, 0.36, 1); }
+
+    /* --- Modales: el fondo se funde y la ventana sube con un leve zoom --- */
+    @keyframes overlayEntrada { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes overlaySalida  { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes modalPop {
+      from { opacity: 0; transform: scale(0.96) translateY(10px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes modalSalida {
+      from { opacity: 1; transform: scale(1) translateY(0); }
+      to   { opacity: 0; transform: scale(0.97) translateY(6px); }
+    }
+    .modal-overlay { animation: overlayEntrada 0.22s ease-out both; }
+    .animate-pop { animation: modalPop 0.32s var(--ease-suave) both; }
+    .modal-overlay.cerrando { animation: overlaySalida 0.18s ease-in both; }
+    .modal-overlay.cerrando .animate-pop { animation: modalSalida 0.18s ease-in both; }
+
+    /* Menú inferior en móvil: sube desde abajo */
+    @keyframes sheetEntrada { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    @keyframes sheetSalida  { from { transform: translateY(0); } to { transform: translateY(100%); } }
+    .animate-sheet { animation: sheetEntrada 0.3s var(--ease-suave) both; }
+    .modal-overlay.cerrando .animate-sheet { animation: sheetSalida 0.18s ease-in both; }
+
+    /* --- Elementos de la lista/cuadrícula: aparecen escalonados al cambiar de carpeta o vista --- */
+    @keyframes entradaElemento {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    /* "backwards" (no "both") para que al terminar no bloquee la opacidad de .arrastrando */
+    .entrada { animation: entradaElemento 0.35s var(--ease-suave) backwards; }
+
+    /* --- Campos del formulario de sesión ---
+       16px en móvil para que el iPhone no haga zoom al enfocar */
+    .campo-sesion {
+      width: 100%;
+      height: 2.25rem;
+      padding: 0 0.75rem;
+      font-size: 16px;
+      border-radius: 0.5rem;
+      border: 1px solid #D7DDE3;
+      background: #ffffff;
+      color: #121316;
+      outline: none;
+      user-select: text;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .dark .campo-sesion { background: #121316; border-color: #2D2F33; color: #FFF7F2; }
+    .campo-sesion::placeholder { color: #9aa3ad; }
+    .dark .campo-sesion::placeholder { color: #666; }
+    .campo-sesion:focus { border-color: #FFA777; box-shadow: 0 0 0 3px rgba(255, 167, 119, 0.2); }
+    .campo-sesion.invalido { border-color: #ef4444; }
+    @media (min-width: 640px) { .campo-sesion { font-size: 0.875rem; } }
+
+    /* --- Texto que coincide con la búsqueda (sustituye el amarillo por defecto de <mark>) --- */
+    mark.coincidencia {
+      background-color: rgba(255, 167, 119, 0.35);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+
+    /* --- Archivo encontrado con el buscador: destello naranja suave --- */
+    @keyframes resaltar {
+      0%, 100% { background-color: transparent; box-shadow: inset 0 0 0 0 rgba(255, 167, 119, 0); }
+      25%, 60% { background-color: rgba(255, 167, 119, 0.18); box-shadow: inset 0 0 0 2px rgba(255, 167, 119, 0.7); }
+    }
+    .resaltado { animation: resaltar 1.8s ease-in-out; }
+
+    /* --- Portada: los bloques suben y aparecen escalonados (el retraso va en cada elemento) --- */
+    @keyframes aparecer {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .aparecer { animation: aparecer 0.6s var(--ease-suave) backwards; }
+
+    /* =============================================================
+       DEMO DEL GESTOR EN LA PORTADA
+       Mini réplica del gestor real. Todo se coloca en % de la ventana (proporción 16:11),
+       así el cursor y las tarjetas coinciden a cualquier tamaño.
+       Hay 3 escenas de 5,5 s; JS cambia la clase .escena-1/2/3 en #demo-gestor:
+         1. Arrastrar "viaje.jpg" a "Fotos"
+         2. Buscar "inf" y saltar a "informe.pdf"
+         3. Crear la carpeta "Proyectos"
+       ============================================================= */
+    .dm {
+      --dm-borde: #D7DDE3; --dm-fondo: #F8F6F4; --dm-superficie: rgba(255,255,255,.75);
+      --dm-texto: #121316; --dm-suave: #7b8591;
+      position: relative; aspect-ratio: 16 / 11; overflow: hidden;
+      border: 1px solid var(--dm-borde); border-radius: 16px;
+      background: var(--dm-fondo); color: var(--dm-texto);
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.35);
+      font-size: 9px; line-height: 1.2;
+    }
+    .dark .dm {
+      --dm-borde: #2D2F33; --dm-fondo: #121316; --dm-superficie: rgba(26,27,30,.8);
+      --dm-texto: #FFF7F2; --dm-suave: #8a8f96;
+    }
+    .dm > * { position: absolute; }
+    .dm svg { flex-shrink: 0; }
+
+    /* Barra superior */
+    .dm-barra { left: 0; right: 0; top: 0; height: 12%; border-bottom: 1px solid var(--dm-borde); background: var(--dm-superficie); }
+    .dm-marca { left: 3%; top: 6%; transform: translateY(-50%); font-family: "Playfair Display", Georgia, serif; font-weight: 500; font-size: 1.6em; }
+    .dm-buscador {
+      left: 33%; width: 34%; top: 2.5%; height: 7%;
+      display: flex; align-items: center; gap: .5em; padding: 0 .7em;
+      border: 1px solid var(--dm-borde); border-radius: 6px; background: var(--dm-fondo); color: var(--dm-suave);
+    }
+    .dm-buscador svg { width: 1.1em; height: 1.1em; }
+    .dm-placeholder { white-space: nowrap; overflow: hidden; }
+    .dm-escrito { position: absolute; left: 2.4em; font-family: "DM Mono", monospace; color: var(--dm-texto); width: 0; overflow: hidden; white-space: nowrap; }
+    .dm-icono-btn {
+      top: 2.8%; width: 4.6%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--dm-borde); border-radius: 5px; color: var(--dm-suave);
+    }
+    .dm-icono-btn svg { width: 55%; height: 55%; }
+    .dm-apagado { opacity: .4; }
+    .dm-rojo { color: #ef4444; }
+    .dm-avatar {
+      left: 91%; top: 2.8%; width: 4.6%; aspect-ratio: 1; border-radius: 999px;
+      display: flex; align-items: center; justify-content: center;
+      background: #FFA777; color: #121316; font-weight: 700; font-size: .75em;
+    }
+
+    /* Resultados de búsqueda */
+    .dm-resultados {
+      left: 33%; width: 34%; top: 10.5%; z-index: 4; padding: .5em 0; opacity: 0;
+      border: 1px solid var(--dm-borde); border-radius: 6px; background: var(--dm-fondo);
+      box-shadow: 0 12px 24px -8px rgba(0,0,0,.35);
+    }
+    .dm-res-cabecera { display: block; padding: 0 .8em .35em; font-size: .7em; text-transform: uppercase; letter-spacing: .08em; color: var(--dm-suave); }
+    .dm-res-fila { display: flex; align-items: center; gap: .6em; padding: .45em .8em; }
+    .dm-res-fila svg { width: 1.2em; height: 1.2em; color: var(--dm-suave); }
+    .dm-res-fila b { display: block; font-weight: 600; }
+    .dm-res-fila i { display: block; font-style: normal; font-size: .8em; color: var(--dm-suave); }
+    .dm mark { background: rgba(255,167,119,.35); color: inherit; border-radius: 2px; }
+
+    /* Barra de acciones */
+    .dm-contador { left: 14.5%; top: 16.85%; transform: translateY(-50%); font-family: "DM Mono", monospace; font-size: .85em; color: var(--dm-suave); }
+    .dm-vistas {
+      left: 50%; width: 12%; top: 13.5%; height: 6.7%; display: flex; gap: 6%; padding: .3em;
+      border: 1px solid var(--dm-borde); border-radius: 5px;
+    }
+    .dm-vistas i { flex: 1; border-radius: 3px; background: rgba(123,133,145,.25); }
+    .dm-vistas i.activa { background: #FFA777; }
+    .dm-boton {
+      top: 13.5%; height: 6.7%; display: flex; align-items: center; justify-content: center; gap: .4em;
+      border: 1px solid var(--dm-borde); border-radius: 5px; font-size: .9em; white-space: nowrap;
+    }
+    .dm-boton svg { width: 1.2em; height: 1.2em; }
+    .dm-nueva { left: 64%; width: 20%; }
+    .dm-subir { left: 85.5%; width: 11.5%; }
+
+    /* Ruta y contenedor */
+    .dm-ruta { left: 3%; top: 24.5%; font-family: "DM Mono", monospace; font-size: .85em; color: var(--dm-suave); }
+    .dm-ruta b { color: var(--dm-texto); }
+    .dm-contenedor { left: 3%; right: 3%; top: 31%; bottom: 3%; border: 1px solid var(--dm-borde); border-radius: 10px; background: var(--dm-superficie); }
+
+    /* Tarjetas (como las de la cuadrícula real) */
+    .dm-card {
+      width: 21%; height: 28.5%; display: flex; flex-direction: column; gap: .35em; padding: .5em;
+      border: 1px solid var(--dm-borde); border-radius: 8px; background: var(--dm-fondo);
+      outline: 2px dashed transparent; outline-offset: -2px;
+    }
+    .dm-check { position: absolute; top: .55em; left: .55em; width: .95em; height: .95em; border: 1px solid var(--dm-borde); border-radius: 2px; background: var(--dm-superficie); z-index: 1; }
+    .dm-prev { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; border-radius: 5px; background: var(--dm-superficie); color: var(--dm-suave); }
+    .dm-prev svg { height: 55%; width: auto; }
+    .dm-carpeta .dm-prev svg { color: #FFA777; }
+    .dm-foto { background: linear-gradient(135deg, #FFA777, #FFD0B3); }
+    .dm-card b { font-weight: 600; font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .dm-pie { display: flex; justify-content: space-between; align-items: center; padding-top: .3em; border-top: 1px solid var(--dm-borde); font-size: .75em; color: var(--dm-suave); }
+    .dm-pie em { display: flex; gap: .25em; }
+    .dm-pie em i { width: .8em; height: .8em; border: 1px solid var(--dm-borde); border-radius: 2px; }
+    .dm-nueva-carpeta { opacity: 0; }
+
+    /* Aviso y cursor */
+    .dm-aviso {
+      left: 50%; bottom: 6%; z-index: 5; padding: .55em 1.1em; border-radius: 6px; white-space: nowrap; opacity: 0;
+      background: #121316; color: #FFF7F2; box-shadow: 0 8px 16px -6px rgba(0,0,0,.4); transform: translateX(-50%);
+    }
+    .dark .dm-aviso { background: #F8F6F4; color: #121316; }
+    .dm-cursor { left: 88%; top: 94%; width: 4.2%; z-index: 6; color: #121316; transform-origin: top left; filter: drop-shadow(0 2px 2px rgba(0,0,0,.35)); }
+    .dark .dm-cursor { color: #fff; stroke: #121316; }
+    .dm-mover { z-index: 2; }
+
+    /* ---- Escena 1: arrastrar "viaje.jpg" a "Fotos" ---- */
+    @keyframes e1Cursor {
+      0%        { left: 88%;   top: 94%; transform: scale(1); }
+      16%       { left: 38.5%; top: 79%; transform: scale(1); }
+      20%       { left: 38.5%; top: 79%; transform: scale(.85); }
+      52%       { left: 15.5%; top: 48%; transform: scale(.85); }
+      60%       { left: 15.5%; top: 48%; transform: scale(1); }
+      80%, 100% { left: 88%;   top: 94%; transform: scale(1); }
+    }
+    @keyframes e1Mover {
+      0%, 16%   { left: 28%; top: 65.5%; transform: scale(1) rotate(0); opacity: 1; box-shadow: none; }
+      22%       { left: 28%; top: 65.5%; transform: scale(1.06) rotate(-3deg); box-shadow: 0 12px 24px -8px rgba(0,0,0,.45); }
+      52%       { left: 5%;  top: 34%;   transform: scale(1.06) rotate(-3deg); opacity: 1; }
+      /* Entra en "Fotos" y se queda ahí (oculto) durante las escenas 2 y 3 */
+      60%       { left: 5%;  top: 34%;   transform: scale(.4); opacity: 0; }
+      61%, 100% { left: 28%; top: 65.5%; transform: scale(1); opacity: 0; box-shadow: none; }
+    }
+    @keyframes e1Destino {
+      0%, 44%, 72%, 100% { outline-color: transparent; box-shadow: inset 0 0 0 999px rgba(255,167,119,0);   transform: scale(1); }
+      48%, 58%           { outline-color: #FFA777;     box-shadow: inset 0 0 0 999px rgba(255,167,119,.15); transform: scale(1); }
+      63%                { outline-color: #FFA777;     box-shadow: inset 0 0 0 999px rgba(255,167,119,.15); transform: scale(1.05); }
+    }
+    @keyframes e1Aviso {
+      0%, 60%   { opacity: 0; transform: translate(-50%, 8px); }
+      66%, 86%  { opacity: 1; transform: translate(-50%, 0); }
+      92%, 100% { opacity: 0; transform: translate(-50%, 4px); }
+    }
+    .escena-1 .dm-cursor  { animation: e1Cursor  5.5s ease-in-out both; }
+    .escena-1 .dm-mover   { animation: e1Mover   5.5s ease-in-out both; }
+    .escena-1 .dm-destino { animation: e1Destino 5.5s ease-in-out both; }
+    .escena-1 .dm-aviso   { animation: e1Aviso   5.5s ease-in-out both; }
+
+    /* ---- Escena 2: buscar "inf" y saltar a "informe.pdf" ---- */
+    @keyframes e2Cursor {
+      0%        { left: 88%;   top: 94%; transform: scale(1); }
+      16%       { left: 45%;   top: 6%;  transform: scale(1); }
+      20%       { left: 45%;   top: 6%;  transform: scale(.85); }
+      24%       { left: 45%;   top: 6%;  transform: scale(1); }
+      50%       { left: 47%;   top: 18%; transform: scale(1); }
+      54%       { left: 47%;   top: 18%; transform: scale(.85); }
+      58%       { left: 47%;   top: 18%; transform: scale(1); }
+      68%       { left: 15.5%; top: 79%; transform: scale(1); }
+      84%, 100% { left: 88%;   top: 94%; transform: scale(1); }
+    }
+    @keyframes e2Buscador {
+      0%, 18%, 62%, 100% { border-color: var(--dm-borde); box-shadow: none; }
+      21%, 58%           { border-color: #FFA777; box-shadow: 0 0 0 2px rgba(255,167,119,.2); }
+    }
+    @keyframes e2Placeholder { 0%, 22%, 64%, 100% { opacity: 1; } 24%, 60% { opacity: 0; } }
+    @keyframes e2Escrito {
+      0%, 24%   { width: 0; animation-timing-function: steps(3, end); }
+      40%, 60%  { width: 3ch; }
+      61%, 100% { width: 0; }
+    }
+    @keyframes e2Resultados {
+      0%, 40%   { opacity: 0; transform: translateY(-4px); }
+      44%, 58%  { opacity: 1; transform: translateY(0); }
+      62%, 100% { opacity: 0; transform: translateY(-4px); }
+    }
+    @keyframes e2Fila { 0%, 47%, 60%, 100% { background: transparent; } 50%, 58% { background: rgba(255,167,119,.15); } }
+    @keyframes e2Encontrado {
+      0%, 64%, 92%, 100% { outline-color: transparent; box-shadow: inset 0 0 0 999px rgba(255,167,119,0); }
+      70%, 84%           { outline-color: #FFA777;     box-shadow: inset 0 0 0 999px rgba(255,167,119,.18); }
+    }
+    .escena-2 .dm-cursor      { animation: e2Cursor      5.5s ease-in-out both; }
+    .escena-2 .dm-buscador    { animation: e2Buscador    5.5s ease-in-out both; }
+    .escena-2 .dm-placeholder { animation: e2Placeholder 5.5s ease-in-out both; }
+    .escena-2 .dm-escrito     { animation: e2Escrito     5.5s linear both; }
+    .escena-2 .dm-resultados  { animation: e2Resultados  5.5s ease-in-out both; }
+    .escena-2 .dm-res-fila    { animation: e2Fila        5.5s ease-in-out both; }
+    .escena-2 .dm-encontrado  { animation: e2Encontrado  5.5s ease-in-out both; }
+
+    /* ---- Escena 3: crear la carpeta "Proyectos" ---- */
+    @keyframes e3Cursor {
+      0%        { left: 88%;   top: 94%; transform: scale(1); }
+      18%       { left: 74%;   top: 17%; transform: scale(1); }
+      22%       { left: 74%;   top: 17%; transform: scale(.85); }
+      26%       { left: 74%;   top: 17%; transform: scale(1); }
+      46%, 66%  { left: 38.5%; top: 79%; transform: scale(1); }
+      84%, 100% { left: 88%;   top: 94%; transform: scale(1); }
+    }
+    @keyframes e3Boton {
+      0%, 19%, 30%, 100% { border-color: var(--dm-borde); background: transparent; transform: scale(1); }
+      22%, 26%           { border-color: #FFA777; background: rgba(255,167,119,.15); transform: scale(.94); }
+    }
+    @keyframes e3Nueva {
+      0%, 28%   { opacity: 0; transform: scale(.6); outline-color: transparent; }
+      36%       { opacity: 1; transform: scale(1.05); outline-color: #FFA777; }
+      40%, 62%  { opacity: 1; transform: scale(1); outline-color: #FFA777; }
+      70%, 86%  { opacity: 1; transform: scale(1); outline-color: transparent; }
+      100%      { opacity: 0; transform: scale(.95); outline-color: transparent; }
+    }
+    /* "viaje.jpg" sigue dentro de "Fotos" en la escena 2 y vuelve a su sitio al final de la 3,
+       a la vez que "Proyectos" desaparece: así el ciclo vuelve al estado inicial con un fundido suave */
+    @keyframes e3Reaparece {
+      0%, 86%   { opacity: 0; transform: scale(.95); }
+      100%      { opacity: 1; transform: scale(1); }
+    }
+    .escena-2 .dm-mover { opacity: 0; }
+
+    .escena-3 .dm-cursor        { animation: e3Cursor    5.5s ease-in-out both; }
+    .escena-3 .dm-nueva         { animation: e3Boton     5.5s ease-in-out both; }
+    .escena-3 .dm-nueva-carpeta { animation: e3Nueva     5.5s ease-in-out both; }
+    .escena-3 .dm-mover         { animation: e3Reaparece 5.5s ease-in-out both; }
+
+    /* --- Botones de la portada: elevación con sombra y destello sutil al pasar el cursor --- */
+    .boton-brillo {
+      position: relative;
+      overflow: hidden;
+      transition: transform .25s var(--ease-suave), box-shadow .25s var(--ease-suave),
+                  background-color .2s ease, border-color .2s ease;
+    }
+    /* Sombras centradas bajo el botón (poco desplazamiento, mucho difuminado) para que se lean como brillo */
+    .boton-brillo { box-shadow: 0 4px 14px -6px rgba(0, 0, 0, .25); }
+    .boton-brillo.bg-brand-orange { box-shadow: 0 4px 16px -6px rgba(255, 167, 119, .45); }
+    .boton-brillo:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 20px -8px rgba(0, 0, 0, .4);
+    }
+    .boton-brillo.bg-brand-orange:hover { box-shadow: 0 8px 24px -6px rgba(255, 167, 119, .55); }
+    .boton-brillo:active { transform: translateY(-1px) scale(.98); }
+    /* Franja de luz inclinada que cruza el botón de izquierda a derecha, muy tenue */
+    .boton-brillo::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -60%;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .28), transparent);
+      transform: skewX(-20deg);
+      pointer-events: none;
+      opacity: 0;
+    }
+    .boton-brillo:hover::after { animation: destello .9s ease-out; }
+    .dark .boton-brillo:not(.bg-brand-orange)::after {
+      background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .12), transparent);
+    }
+    @keyframes destello {
+      0%   { left: -60%; opacity: 1; }
+      100% { left: 130%; opacity: 1; }
+    }
+
+    /* --- Aviso flotante --- */
+    @keyframes avisoEntrada {
+      from { opacity: 0; transform: translate(-50%, 12px) scale(0.97); }
+      to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    }
+    @keyframes avisoSalida {
+      from { opacity: 1; transform: translate(-50%, 0); }
+      to   { opacity: 0; transform: translate(-50%, 8px); }
+    }
+    #aviso.mostrando { animation: avisoEntrada 0.3s var(--ease-suave) both; }
+    #aviso.ocultando { animation: avisoSalida 0.2s ease-in both; }
+
+    /* --- Icono del tema: pequeño giro al cambiar --- */
+    @keyframes giroTema {
+      from { transform: rotate(-90deg) scale(0.6); opacity: 0; }
+      to   { transform: rotate(0) scale(1); opacity: 1; }
+    }
+    .giro-tema { animation: giroTema 0.4s var(--ease-suave); }
+
+    /* --- Tarjetas de la cuadrícula: elevación suave al pasar el ratón --- */
+    .tarjeta {
+      transition: transform 0.25s var(--ease-suave), box-shadow 0.25s var(--ease-suave), border-color 0.2s ease, background-color 0.3s ease, opacity 0.2s ease;
+    }
+    .tarjeta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.35);
+    }
+
+    /* --- Botones con brillo: resplandor estable en vez de un pulso continuo --- */
+    .glow-button {
+      transition: border-color 0.2s ease, color 0.2s ease, background-color 0.2s ease, box-shadow 0.3s var(--ease-suave), transform 0.15s var(--ease-suave);
+    }
+    .glow-button:hover {
+      border-color: #FFA777 !important;
+      color: #121316 !important;
+      box-shadow: 0 0 0 1px rgba(255, 167, 119, 0.25), 0 0 14px rgba(255, 167, 119, 0.35);
+    }
+    .dark .glow-button:hover {
+      color: #ffffff !important;
+      box-shadow: 0 0 0 1px rgba(255, 167, 119, 0.2), 0 0 14px rgba(255, 167, 119, 0.25);
+    }
+
+    /* Respetar a quien tiene activado "reducir movimiento" en su sistema */
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* Estilos para el Checkbox Personalizado */
+    .custom-checkbox {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }
+    .custom-checkbox.checked {
+      background-color: #FFA777 !important;
+      border-color: #FFA777 !important;
+      box-shadow: 0 0 8px rgba(255, 167, 119, 0.4);
+    }
+    .custom-checkbox .check-icon {
+      opacity: 0;
+      transform: scale(0.5);
+      transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .custom-checkbox.checked .check-icon {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* Arrastrar y soltar */
+    [draggable="true"] { cursor: grab; }
+    .arrastrando { opacity: 0.35; }
+    /* El destino se tiñe de naranja; el contorno animado lo dibuja #ind-dentro (abajo) */
+    .destino-activo { background-color: rgba(255, 167, 119, 0.15) !important; }
+
+    /* --- Indicadores al arrastrar ---
+       Son dos capas fijas que se colocan encima del elemento (funcionan igual en filas y tarjetas). */
+    .ind-dentro, .ind-linea { position: fixed; z-index: 60; pointer-events: none; opacity: 0; }
+    .ind-dentro.visible, .ind-linea.visible { opacity: 1; }
+
+    /* 1) Contorno discontinuo: se dibuja alrededor del elemento y luego las rayas avanzan despacio */
+    .ind-dentro svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .ind-trazo { fill: none; stroke: #fff; stroke-width: 6; stroke-dasharray: 1; stroke-dashoffset: 1; }
+    .ind-dentro.animar .ind-trazo { animation: trazarContorno .3s cubic-bezier(.22, 1, .36, 1) forwards; }
+    @keyframes trazarContorno { to { stroke-dashoffset: 0; } }
+    .ind-hormigas {
+      fill: none; stroke: #FFA777; stroke-width: 2; stroke-linecap: round;
+      stroke-dasharray: 8 6; animation: rayasAvanzan 1.4s linear infinite;
+      filter: drop-shadow(0 0 3px rgba(255, 167, 119, .45));   /* resplandor suave */
+    }
+    @keyframes rayasAvanzan { to { stroke-dashoffset: -28; } }
+    /* Destello que da vueltas por el contorno (empieza cuando el contorno ya está dibujado) */
+    .ind-destello {
+      fill: none; stroke: rgba(255, 240, 230, .65); stroke-width: 2.5; stroke-linecap: round;
+      stroke-dasharray: 7 93; opacity: 0;
+      filter: drop-shadow(0 0 3px rgba(255, 200, 170, .6));
+    }
+    .ind-dentro.animar .ind-destello { animation: destelloContorno 1.8s .25s linear infinite; }
+    @keyframes destelloContorno {
+      0%   { stroke-dashoffset: 0;    opacity: 1; }
+      100% { stroke-dashoffset: -100; opacity: 1; }
+    }
+
+    /* 2) Línea de recolocar: se llena como una barra de carga y la recorre un brillo */
+    .ind-linea {
+      border-radius: 3px; overflow: hidden; background: #FFA777;
+      box-shadow: 0 0 6px rgba(255, 167, 119, .45), 0 0 1px rgba(255, 167, 119, .8);
+      transform-origin: left center;
+    }
+    .ind-linea.vertical { transform-origin: center top; }
+    .ind-linea.animar          { animation: cargarLinea  .22s cubic-bezier(.22, 1, .36, 1) both; }
+    .ind-linea.vertical.animar { animation-name: cargarLineaV; }
+    @keyframes cargarLinea  { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    @keyframes cargarLineaV { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    .ind-linea::after {
+      content: ''; position: absolute; top: 0; left: 0; width: 40%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .5), transparent);
+      transform: translateX(-100%);
+    }
+    .ind-linea.vertical::after {
+      width: 100%; height: 40%;
+      background: linear-gradient(180deg, transparent, rgba(255, 255, 255, .5), transparent);
+      transform: translateY(-100%);
+    }
+    .ind-linea.animar::after          { animation: brilloLinea  1.1s .15s ease-in-out infinite; }
+    .ind-linea.vertical.animar::after { animation-name: brilloLineaV; }
+    @keyframes brilloLinea  { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+    @keyframes brilloLineaV { from { transform: translateY(-100%); } to { transform: translateY(260%); } }
+  </style>
+</head>
+<body class="h-[100dvh] flex flex-col bg-brand-cream text-[#121316] dark:bg-brand-darkBg dark:text-[#FFF7F2] relative overflow-hidden select-none">
+
+  <!-- Canvas con Fractal Sutil en Fondo -->
+  <canvas id="bg-canvas" class="fixed inset-0 pointer-events-none z-0 opacity-40 dark:opacity-20 transition-opacity duration-300"></canvas>
+
+  <input type="file" id="input-subir-archivo" class="hidden" multiple onchange="procesarArchivosSubidos(event)">
+
+  <!-- =============================================================
+       PORTADA: se muestra cuando no hay sesión iniciada.
+       Cabecera: nombre (izq.) y tema (der.).
+       Centro: eslogan grande; debajo, demo animada del gestor (izq.) y texto + botones (der.).
+       ============================================================= -->
+  <div id="portada" class="hidden relative z-10 flex-1 min-h-0 overflow-y-auto flex flex-col">
+    <!-- Cabecera de la portada: banda propia (fondo y línea inferior) para separar el nombre del resto -->
+    <header class="flex items-center justify-between gap-3 px-4 sm:px-8 py-2.5 sm:py-3 border-b border-brand-slate dark:border-brand-darkBorder bg-white/60 dark:bg-[#0d0e10]/70 backdrop-blur-[3px]">
+      <!-- Nombre (izquierda): tipografía formal, sin icono -->
+      <span class="aparecer font-marca text-3xl sm:text-4xl font-medium leading-none text-brand-darkBg dark:text-[#FFF7F2]" style="animation-delay: 0ms">VantaFile</span>
+
+      <!-- Tema (derecha) -->
+      <div class="flex justify-end">
+        <button type="button" onclick="toggleTema()" title="Cambiar tema" class="w-9 h-9 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-white/60 dark:bg-brand-darkSurface/60 text-slate-600 dark:text-[#D7DDE3] hover:text-brand-darkBg hover:bg-brand-slate/40 dark:hover:text-white dark:hover:bg-brand-darkSurface transition-all flex items-center justify-center active:scale-90">
+          <svg class="icono-sol w-[18px] h-[18px] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+          <svg class="icono-luna w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Contenido central -->
+    <div class="flex-1 flex flex-col justify-center w-full max-w-6xl mx-auto px-6 py-10 sm:py-12">
+      <!-- Eslogan como titular principal -->
+      <h1 class="aparecer text-center font-display text-4xl sm:text-5xl lg:text-6xl font-medium leading-[1.08] [text-wrap:balance] text-brand-darkBg dark:text-[#FFF7F2] max-w-4xl mx-auto" style="animation-delay: 80ms">
+        Todo en un solo lugar,
+        <span class="italic font-normal text-brand-orange">orden y simplicidad.</span>
+      </h1>
+
+      <div class="mt-10 lg:mt-14 grid lg:grid-cols-2 gap-10 lg:gap-24 items-center">
+
+        <!-- IZQUIERDA: demo animada del gestor (decorativa).
+             Oculta en teléfonos (< 768 px): ahí no existe arrastrar y soltar y se vería diminuta.
+             En tablets va debajo del texto y los botones; en escritorio, a la izquierda. -->
+        <div class="aparecer hidden md:block order-2 lg:order-1 w-full max-w-xl mx-auto lg:mx-0" style="animation-delay: 240ms" aria-hidden="true">
+          <!-- Mini réplica del gestor. Todo va en posiciones % para que la animación encaje a cualquier tamaño.
+               La clase "escena-N" (la cambia JS cada 5,5 s) decide qué demostración se reproduce. -->
+          <div id="demo-gestor" class="dm escena-1">
+            <!-- Barra superior: nombre, buscador centrado, tema y avatar -->
+            <div class="dm-barra"></div>
+            <span class="dm-marca">VantaFile</span>
+            <div class="dm-buscador">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+              <span class="dm-placeholder">Buscar en todas las carpetas</span>
+              <span class="dm-escrito">inf</span>
+            </div>
+            <span class="dm-icono-btn" style="left:85%"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg></span>
+            <span class="dm-avatar">TÚ</span>
+
+            <!-- Resultados de búsqueda (escena 2) -->
+            <div class="dm-resultados">
+              <span class="dm-res-cabecera">1 resultado</span>
+              <span class="dm-res-fila">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V7.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 1H7a2 2 0 00-2 2v16a2 2 0 002 2z"/></svg>
+                <span><b><mark>inf</mark>orme.pdf</b><i>Mis archivos</i></span>
+              </span>
+            </div>
+
+            <!-- Barra de acciones -->
+            <span class="dm-icono-btn dm-apagado" style="left:3%; top:13.5%"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg></span>
+            <span class="dm-icono-btn dm-apagado dm-rojo" style="left:8.5%; top:13.5%"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></span>
+            <span class="dm-contador">0 seleccionados</span>
+            <span class="dm-vistas">
+              <i></i><i class="activa"></i><i></i>
+            </span>
+            <span class="dm-boton dm-nueva"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg><span>Nueva carpeta</span></span>
+            <span class="dm-boton dm-subir"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg><span>Subir</span></span>
+
+            <!-- Ruta -->
+            <span class="dm-ruta">← Volver &nbsp;|&nbsp; <b>Mis archivos</b></span>
+
+            <!-- Contenedor de archivos -->
+            <div class="dm-contenedor"></div>
+
+            <!-- Tarjetas (fila 1) -->
+            <div class="dm-card dm-carpeta dm-destino" style="left:5%; top:34%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></span><b>Fotos</b><span class="dm-pie">--<em><i></i><i></i><i></i></em></span></div>
+            <div class="dm-card dm-carpeta" style="left:28%; top:34%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></span><b>Documentos</b><span class="dm-pie">--<em><i></i><i></i><i></i></em></span></div>
+            <div class="dm-card dm-carpeta" style="left:51%; top:34%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></span><b>Música</b><span class="dm-pie">--<em><i></i><i></i><i></i></em></span></div>
+            <div class="dm-card" style="left:74%; top:34%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V7.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 1H7a2 2 0 00-2 2v16a2 2 0 002 2z"/></svg></span><b>notas.txt</b><span class="dm-pie">2 KB<em><i></i><i></i><i></i></em></span></div>
+            <!-- Tarjetas (fila 2) -->
+            <div class="dm-card dm-encontrado" style="left:5%; top:65.5%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V7.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 1H7a2 2 0 00-2 2v16a2 2 0 002 2z"/></svg></span><b>informe.pdf</b><span class="dm-pie">1.2 MB<em><i></i><i></i><i></i></em></span></div>
+            <div class="dm-card dm-mover" style="left:28%; top:65.5%"><i class="dm-check"></i><span class="dm-prev dm-foto"></span><b>viaje.jpg</b><span class="dm-pie">3.4 MB<em><i></i><i></i><i></i></em></span></div>
+            <!-- Carpeta que se crea en la escena 3: ocupa el hueco que dejó "viaje.jpg" al moverse a "Fotos".
+                 Al final del ciclo se funde con "viaje.jpg", que vuelve a su sitio. -->
+
+            <div class="dm-card dm-carpeta dm-nueva-carpeta" style="left:28%; top:65.5%"><i class="dm-check"></i><span class="dm-prev"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></span><b>Proyectos</b><span class="dm-pie">--<em><i></i><i></i><i></i></em></span></div>
+
+            <!-- Aviso (escena 1) -->
+            <span class="dm-aviso">1 elemento movido a "Fotos"</span>
+
+            <!-- Cursor -->
+            <svg class="dm-cursor" viewBox="0 0 24 24" fill="currentColor" stroke="white" stroke-width="1"><path d="M4 2l16 9.5-7 1.6L9.5 20z"/></svg>
+          </div>
+          <p id="demo-pie" class="mt-3 text-center lg:text-left font-mono text-[11px] text-slate-400 dark:text-[#888888] transition-opacity duration-300">Arrastra un archivo sobre una carpeta y listo.</p>
+        </div>
+
+        <!-- DERECHA: texto y botones. En escritorio se pega al borde derecho para separarse de la demo -->
+        <div class="order-1 lg:order-2 lg:justify-self-end lg:max-w-md flex flex-col items-center lg:items-start text-center lg:text-left">
+      <p class="aparecer text-base sm:text-lg leading-relaxed text-slate-500 dark:text-[#D7DDE3] max-w-md" style="animation-delay: 200ms">
+        Crea carpetas, arrastra tus archivos y búscalos al instante desde cualquier carpeta.
+      </p>
+
+      <!-- Botones grandes; al pasar el cursor se elevan con sombra y les recorre un destello (ver .boton-brillo) -->
+      <div class="aparecer mt-8 flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full sm:w-auto max-w-xs sm:max-w-none" style="animation-delay: 260ms">
+        <button type="button" onclick="abrirModalSesion('entrar')" class="boton-brillo h-14 px-10 rounded-2xl bg-brand-orange text-brand-darkBg text-base font-semibold hover:bg-[#FFB68C]">
+          Iniciar sesión
+        </button>
+        <button type="button" onclick="abrirModalSesion('registro')" class="boton-brillo h-14 px-10 rounded-2xl border border-brand-slate dark:border-brand-darkBorder bg-white/70 dark:bg-brand-darkSurface/70 text-brand-darkBg dark:text-[#FFF7F2] text-base font-semibold hover:border-brand-orange">
+          Crear cuenta
+        </button>
+      </div>
+
+      <button type="button" onclick="continuarSinCuenta()" class="aparecer mt-5 text-xs text-slate-400 dark:text-[#888888] hover:text-brand-orange underline-offset-4 hover:underline transition-colors" style="animation-delay: 300ms">
+        o continúa sin cuenta
+      </button>
+
+      <!-- Puntos destacados -->
+      <div class="aparecer mt-8 flex flex-wrap justify-center lg:justify-start gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-500 dark:text-[#D7DDE3]" style="animation-delay: 340ms">
+        <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkSurface/50">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Arrastra y organiza al instante
+        </span>
+        <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkSurface/50">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Buscar, más fácil que nunca
+        </span>
+        <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkSurface/50">
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Almacenamiento gratis y privado
+        </span>
+      </div>
+        </div><!-- /derecha -->
+      </div><!-- /grid -->
+    </div>
+
+    <p class="pb-5 text-center font-mono text-[11px] text-slate-400 dark:text-[#666]">© 2026 VantaFile</p>
+  </div>
+
+  <!-- =============================================================
+       APLICACIÓN: se muestra con sesión iniciada (o en modo invitado)
+       ============================================================= -->
+  <div id="app" class="hidden flex-1 min-h-0 flex flex-col">
+
+  <!-- Barra superior: marca a la izquierda, buscador en el centro, tema y sesión a la derecha.
+       Marca y botones ocupan lo mismo (flex-1) para que el buscador quede centrado de verdad.
+       En móvil el buscador baja a una segunda fila a todo el ancho. -->
+  <header class="relative z-30 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 sm:px-4 py-2.5 border-b border-brand-slate dark:border-brand-darkBorder bg-white/70 dark:bg-[#0d0e10]/80 backdrop-blur-[3px]">
+    <!-- Marca: lleva a la carpeta principal -->
+    <div class="flex-1 min-w-0 flex">
+      <a href="#" onclick="irARaiz(); return false;" class="flex items-center min-w-0 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange">
+        <span class="font-marca font-medium text-2xl leading-none text-brand-darkBg dark:text-[#FFF7F2] truncate">VantaFile</span>
+      </a>
+    </div>
+
+    <!-- Buscador global: busca en todas las carpetas (atajo: tecla "/") -->
+    <div id="buscador" class="relative order-last w-full sm:order-none sm:w-auto sm:flex-[0_1_34rem]">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-[#888888] pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+      <!-- Texto de 16px en móvil: con menos, el iPhone hace zoom al enfocar -->
+      <input type="text" id="input-buscar" autocomplete="off" oninput="actualizarBusqueda()" onfocus="actualizarBusqueda()" onkeydown="teclaBuscador(event)" placeholder="Buscar en todas las carpetas" class="w-full h-9 pl-9 pr-3 sm:pr-9 text-base sm:text-sm border rounded-lg bg-white/70 border-brand-slate text-brand-darkBg placeholder:text-slate-400 dark:bg-brand-darkSurface/70 dark:border-brand-darkBorder dark:text-[#FFF7F2] dark:placeholder:text-[#777] focus:outline-none focus:border-brand-orange focus:bg-white dark:focus:bg-brand-darkSurface transition-all">
+      <kbd class="hidden sm:flex absolute right-2.5 top-1/2 -translate-y-1/2 h-5 min-w-[20px] px-1 items-center justify-center rounded border border-brand-slate dark:border-brand-darkBorder text-[11px] font-mono text-slate-400 dark:text-[#888888] pointer-events-none">/</kbd>
+
+      <!-- Panel de resultados -->
+      <div id="resultados-busqueda" class="hidden absolute left-0 right-0 top-full mt-1.5 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-brand-cream dark:bg-brand-darkSurface shadow-2xl overflow-hidden animate-pop">
+        <p id="resultados-cabecera" class="px-3 pt-2.5 pb-1.5 text-[11px] uppercase tracking-wider text-slate-500 dark:text-[#888888]"></p>
+        <div id="resultados-lista" class="max-h-[60vh] sm:max-h-80 overflow-auto pb-1.5"></div>
+      </div>
+    </div>
+
+    <div class="flex-1 flex items-center justify-end gap-2">
+      <button id="btn-tema" type="button" onclick="toggleTema()" class="w-8 h-8 rounded-md border border-brand-slate dark:border-brand-darkBorder text-slate-600 dark:text-[#D7DDE3] hover:text-brand-darkBg hover:bg-brand-slate/40 dark:hover:text-white dark:hover:bg-brand-darkSurface transition-all flex items-center justify-center p-0 active:scale-90">
+        <svg id="icon-sol" class="icono-sol w-[18px] h-[18px] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+        <svg id="icon-luna" class="icono-luna w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+      </button>
+
+      <!-- Sin sesión: botón para abrir la ventana de inicio de sesión -->
+      <button id="btn-iniciar-sesion" type="button" onclick="abrirModalSesion('entrar')" title="Iniciar sesión" class="h-8 px-2 sm:px-3 rounded-md bg-brand-orange text-brand-darkBg text-xs font-semibold flex items-center gap-1.5 hover:bg-[#FFB68C] active:scale-95 transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M15 12H3"></path></svg>
+        <span class="hidden sm:inline">Iniciar sesión</span>
+      </button>
+
+      <!-- Con sesión: avatar con menú (nombre, correo, cerrar sesión) -->
+      <div id="zona-usuario" class="relative hidden">
+        <button id="btn-usuario" type="button" onclick="toggleMenuUsuario()" title="Tu cuenta" class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center bg-brand-orange text-brand-darkBg text-xs font-bold ring-2 ring-transparent hover:ring-brand-orange/60 transition-all active:scale-95"></button>
+        <div id="menu-usuario" class="hidden absolute right-0 top-full mt-2 w-64 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-brand-cream dark:bg-brand-darkSurface shadow-2xl animate-pop overflow-hidden">
+          <div class="px-4 py-3 border-b border-brand-slate dark:border-brand-darkBorder">
+            <p id="menu-usuario-nombre" class="text-sm font-semibold truncate text-brand-darkBg dark:text-[#FFF7F2]"></p>
+            <p id="menu-usuario-correo" class="text-xs truncate text-slate-500 dark:text-[#888888] mt-0.5"></p>
+          </div>
+          <button type="button" onclick="cerrarSesion()" class="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-left text-brand-darkBg dark:text-[#FFF7F2] hover:bg-brand-slate/40 dark:hover:bg-brand-darkBorder transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 min-h-0 flex flex-col p-3 sm:p-6 z-10 relative">
+  <div class="max-w-6xl w-full mx-auto flex-1 min-h-0 flex flex-col">
+
+    <!-- Barra de Acciones Globales -->
+    <!-- En móvil los botones muestran solo el icono (el texto queda en el "title") -->
+    <div class="flex flex-wrap items-center justify-between gap-2 sm:gap-4 mb-3 sm:mb-4 text-xs text-slate-500 dark:text-[#D7DDE3] border-b border-brand-slate/60 dark:border-brand-darkBorder/60 pb-3 sm:pb-4">
+      <div class="flex items-center gap-2">
+        <button id="btn-mover-masivo" onclick="abrirModalMoverMasivo()" title="Mover seleccionados" disabled class="glow-button px-2.5 sm:px-3 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface dark:text-[#FFF7F2] disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1.5 active:scale-95">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+          <span class="hidden sm:inline">Mover seleccionados</span>
+        </button>
+        <button id="btn-eliminar-masivo" onclick="eliminarMasivo()" title="Eliminar seleccionados" disabled class="glow-button px-2.5 sm:px-3 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-red-500/10 text-red-500 dark:hover:bg-red-500/20 disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1.5 active:scale-95">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          <span class="hidden sm:inline">Eliminar seleccionados</span>
+        </button>
+        <span id="contador-seleccionados" class="ml-1 sm:ml-2 font-mono text-[11px] whitespace-nowrap">0 seleccionados</span>
+      </div>
+
+      <div class="flex items-center gap-2 ml-auto">
+        <!-- Selector de vista (compacto: misma altura que los botones de esta barra) -->
+        <div class="flex items-center border border-brand-slate dark:border-brand-darkBorder rounded bg-white/60 dark:bg-brand-darkSurface/60 backdrop-blur-[3px] p-0.5 gap-0.5">
+          <button id="btn-view-list" onclick="setModoVista('lista')" title="Vista lista" class="w-6 h-6 rounded-sm text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-all flex items-center justify-center p-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M5 5h14M5 12h14M5 19h14"></path></svg>
+          </button>
+          <button id="btn-view-grid6" onclick="setModoVista('grid6')" title="Cuadrícula mediana" class="w-6 h-6 rounded-sm text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-all flex items-center justify-center p-0">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="4" height="4" rx="1"/><rect x="10" y="4" width="4" height="4" rx="1"/><rect x="16" y="4" width="4" height="4" rx="1"/><rect x="4" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="16" y="10" width="4" height="4" rx="1"/><rect x="4" y="16" width="4" height="4" rx="1"/><rect x="10" y="16" width="4" height="4" rx="1"/><rect x="16" y="16" width="4" height="4" rx="1"/></svg>
+          </button>
+          <button id="btn-view-grid4" onclick="setModoVista('grid4')" title="Cuadrícula grande" class="w-6 h-6 rounded-sm text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-all flex items-center justify-center p-0">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+          </button>
+        </div>
+        <span class="w-px h-5 bg-brand-slate dark:bg-brand-darkBorder sm:mx-1"></span>
+        <button onclick="abrirModalCrear('carpeta')" title="Nueva carpeta" class="glow-button px-2.5 sm:px-3 py-1.5 border border-brand-slate rounded hover:bg-white text-brand-darkBg dark:border-brand-darkBorder dark:hover:bg-brand-darkSurface dark:text-[#FFF7F2] flex items-center gap-1.5 active:scale-95">
+          <svg class="w-4 h-4 text-brand-darkBg dark:text-[#FFF7F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
+          <span class="hidden sm:inline">Nueva Carpeta</span>
+        </button>
+        <button onclick="activarSelectorArchivo()" title="Subir archivo" class="glow-button px-2.5 sm:px-3 py-1.5 border border-brand-slate rounded hover:bg-white text-brand-darkBg dark:border-brand-darkBorder dark:hover:bg-brand-darkSurface dark:text-[#FFF7F2] flex items-center gap-1.5 active:scale-95">
+          <svg class="w-4 h-4 text-brand-darkBg dark:text-[#FFF7F2]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+          <span class="hidden sm:inline">Subir Archivo</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navegación de Ruta -->
+    <div class="flex items-center gap-2 text-xs mb-3 text-slate-500 dark:text-[#D7DDE3]">
+      <button onclick="subirNivel()" id="btn-atras" class="hover:text-brand-darkBg dark:hover:text-white disabled:opacity-30 flex items-center gap-1 transition-all active:scale-95" disabled>
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+        Volver
+      </button>
+      <span class="text-slate-300 dark:text-brand-darkBorder">|</span>
+      <nav id="ruta-actual" class="flex items-center gap-0.5 font-mono min-w-0 overflow-x-auto"></nav>
+      <span class="ml-auto hidden lg:inline text-[11px] text-slate-400 dark:text-[#888888] whitespace-nowrap">Suelta en el centro de una carpeta para meterlo, o en el borde para recolocarlo</span>
+      <!-- Solo visible con orden personalizado; al pulsarla se vuelve al orden automático -->
+      <button id="chip-orden" type="button" onclick="quitarOrdenPersonalizado()" title="Volver a ordenar por nombre" class="hidden ml-auto lg:ml-2 flex-shrink-0 items-center gap-1.5 px-2.5 py-1 rounded-full border border-brand-orange/50 bg-brand-orange/10 text-[11px] text-brand-darkBg dark:text-[#FFF7F2] hover:bg-brand-orange/20 transition-colors">
+        Orden personalizado <span class="text-brand-orange">✕</span>
+      </button>
+    </div>
+
+    <!-- Contenedor Principal -->
+    <div id="contenedor-principal" class="flex-1 overflow-auto border border-brand-slate/60 dark:border-brand-darkBorder rounded-lg bg-white/40 dark:bg-brand-darkSurface/40 backdrop-blur-[2px] shadow-xl p-2">
+      <!-- Tabla Lista -->
+      <table id="vista-lista" class="w-full text-left text-xs border-collapse">
+        <thead>
+          <tr class="border-b border-brand-slate/80 dark:border-brand-darkBorder text-slate-500 dark:text-[#D7DDE3] uppercase bg-white/50 dark:bg-brand-darkBg/60 sticky top-0 tracking-wider backdrop-blur-[3px]">
+            <th class="p-3 w-10 text-center">
+              <div id="check-todos" onclick="toggleSeleccionarTodos()" class="custom-checkbox border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkBg/50 mx-auto">
+                <svg class="w-3 h-3 text-brand-darkBg stroke-current check-icon" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+              </div>
+            </th>
+            <th class="p-3 cursor-pointer hover:text-brand-darkBg dark:hover:text-[#ffffff] transition-colors" onclick="ordenarPor('nombre')">Nombre ↕</th>
+            <!-- Columnas secundarias: se ocultan en pantallas pequeñas -->
+            <th class="hidden md:table-cell p-3 cursor-pointer hover:text-brand-darkBg dark:hover:text-[#ffffff] transition-colors" onclick="ordenarPor('tipo')">Tipo ↕</th>
+            <th class="hidden md:table-cell p-3 cursor-pointer hover:text-brand-darkBg dark:hover:text-[#ffffff] transition-colors" onclick="ordenarPor('fecha')">Fecha de modificación ↕</th>
+            <th class="hidden sm:table-cell p-3 cursor-pointer hover:text-brand-darkBg dark:hover:text-[#ffffff] text-right transition-colors" onclick="ordenarPor('tamano')">Tamaño ↕</th>
+            <th class="p-3 text-center w-12 sm:w-44"><span class="hidden sm:inline">Acciones</span></th>
+          </tr>
+        </thead>
+        <tbody id="lista-elementos" class="divide-y divide-brand-slate/30 dark:divide-brand-darkBorder/40">
+        </tbody>
+      </table>
+
+      <!-- Contenedor Cuadrícula -->
+      <div id="vista-grid" class="hidden grid gap-4 p-2">
+      </div>
+    </div>
+  </div>
+  </main>
+  </div><!-- /#app -->
+
+  <!-- Modales -->
+  <div id="modal-crear" class="fixed inset-0 bg-black/60 modal-overlay flex items-center justify-center hidden z-50 backdrop-blur-[2px] p-4">
+    <div class="bg-brand-cream dark:bg-brand-darkSurface border border-brand-slate dark:border-brand-darkBorder w-full max-w-sm rounded-lg p-5 shadow-2xl flex flex-col gap-4 animate-pop">
+      <div class="flex justify-between items-center border-b border-brand-slate dark:border-brand-darkBorder pb-2">
+        <h3 id="modal-crear-titulo" class="font-display font-semibold text-lg leading-tight text-brand-darkBg dark:text-[#FFF7F2]">Nueva Carpeta</h3>
+        <button onclick="cerrarModalCrear()" class="text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-colors">✕</button>
+      </div>
+      <div>
+        <label for="input-nombre-nuevo" class="block text-xs text-slate-500 dark:text-[#D7DDE3] mb-1.5">Nombre:</label>
+        <input type="text" id="input-nombre-nuevo" class="w-full px-3 py-1.5 text-base sm:text-xsborder rounded bg-white dark:bg-brand-darkBg border-brand-slate dark:border-brand-darkBorder text-brand-darkBg dark:text-[#FFF7F2] focus:outline-none focus:border-brand-orange transition-all" placeholder="Escribe un nombre...">
+        <p id="modal-crear-error" class="hidden mt-1.5 text-[11px] text-red-500"></p>
+      </div>
+      <div class="flex justify-end gap-2 text-xs pt-1">
+        <button onclick="cerrarModalCrear()" class="glow-button px-3 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface text-brand-darkBg dark:text-[#D7DDE3]">Cancelar</button>
+        <button onclick="confirmarCreacion()" class="glow-button px-3 py-1.5 bg-brand-orange text-brand-darkBg font-semibold rounded active:scale-95">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-mover" class="fixed inset-0 bg-black/60 modal-overlay flex items-center justify-center hidden z-50 backdrop-blur-[2px] p-4">
+    <div class="bg-brand-cream dark:bg-brand-darkSurface border border-brand-slate dark:border-brand-darkBorder w-full max-w-md rounded-xl shadow-2xl flex flex-col animate-pop overflow-hidden">
+      <!-- Cabecera: qué se mueve -->
+      <div class="flex items-start gap-3 p-5 pb-4">
+        <div class="w-9 h-9 rounded-lg bg-brand-orange/15 text-brand-orange flex items-center justify-center flex-shrink-0">
+          <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 id="mover-titulo" class="font-display font-semibold text-lg leading-tight text-brand-darkBg dark:text-[#FFF7F2]">Mover elementos</h3>
+          <p id="mover-subtitulo" class="text-xs text-slate-500 dark:text-[#D7DDE3] truncate mt-0.5"></p>
+        </div>
+        <button onclick="cerrarModalMover()" title="Cerrar" class="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-brand-darkBg hover:bg-brand-slate/50 dark:hover:text-white dark:hover:bg-brand-darkBorder transition-colors">✕</button>
+      </div>
+
+      <!-- Árbol de carpetas -->
+      <div class="px-5">
+        <p class="text-[11px] uppercase tracking-wider text-slate-500 dark:text-[#888888] mb-2">Elige la carpeta destino</p>
+        <div id="arbol-mover" class="h-64 overflow-auto rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-white/70 dark:bg-brand-darkBg/70 p-1.5 text-xs"></div>
+        <p class="text-[11px] text-slate-400 dark:text-[#888888] mt-2">Doble clic en una carpeta para mover directamente.</p>
+      </div>
+
+      <!-- Pie: destino elegido y acciones -->
+      <div class="flex items-center justify-between gap-3 p-5 pt-4 mt-4 border-t border-brand-slate dark:border-brand-darkBorder bg-white/40 dark:bg-brand-darkBg/30">
+        <div class="min-w-0 text-xs">
+          <span class="text-slate-500 dark:text-[#888888]">Destino:</span>
+          <span id="mover-destino-ruta" class="font-mono text-brand-darkBg dark:text-[#FFF7F2] truncate">ninguno</span>
+        </div>
+        <div class="flex gap-2 text-xs flex-shrink-0">
+          <button onclick="cerrarModalMover()" class="glow-button px-3 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface text-brand-darkBg dark:text-[#D7DDE3]">Cancelar</button>
+          <button id="btn-confirmar-mover" onclick="confirmarMover()" disabled class="glow-button px-4 py-1.5 bg-brand-orange text-brand-darkBg font-semibold rounded active:scale-95 disabled:opacity-40 disabled:pointer-events-none">Mover aquí</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ventana de inicio de sesión / registro -->
+  <div id="modal-sesion" onclick="if (event.target === this) cerrarModalSesion()" class="fixed inset-0 bg-black/60 modal-overlay flex items-center justify-center hidden z-50 backdrop-blur-[2px] p-4">
+    <div class="bg-brand-cream dark:bg-brand-darkSurface border border-brand-slate dark:border-brand-darkBorder w-full max-w-sm rounded-xl shadow-2xl animate-pop overflow-hidden max-h-full overflow-y-auto">
+      <!-- Cabecera -->
+      <div class="flex items-start gap-3 p-5 pb-4">
+        <span class="w-9 h-9 rounded-lg bg-brand-orange text-brand-darkBg flex items-center justify-center flex-shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+        </span>
+        <div class="flex-1 min-w-0">
+          <h3 id="sesion-titulo" class="font-display font-semibold text-lg leading-tight text-brand-darkBg dark:text-[#FFF7F2]">Bienvenido de nuevo</h3>
+          <p id="sesion-subtitulo" class="text-xs text-slate-500 dark:text-[#D7DDE3] mt-0.5">Entra para ver tus archivos.</p>
+        </div>
+        <button type="button" onclick="cerrarModalSesion()" title="Cerrar" class="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-brand-darkBg hover:bg-brand-slate/50 dark:hover:text-white dark:hover:bg-brand-darkBorder transition-colors">✕</button>
+      </div>
+
+      <div class="px-5 pb-5">
+        <!-- Pestañas -->
+        <div class="grid grid-cols-2 p-1 mb-4 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-white/60 dark:bg-brand-darkBg/60 text-xs font-semibold">
+          <button type="button" id="tab-entrar" onclick="cambiarPestanaSesion('entrar')" class="py-1.5 rounded-md transition-all">Iniciar sesión</button>
+          <button type="button" id="tab-registro" onclick="cambiarPestanaSesion('registro')" class="py-1.5 rounded-md transition-all">Crear cuenta</button>
+        </div>
+
+        <!-- Aviso si falta la configuración de Firebase -->
+        <div id="sesion-aviso-config" class="hidden mb-4 p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"></div>
+
+        <form id="form-sesion" onsubmit="enviarSesion(event)" novalidate class="flex flex-col gap-3">
+          <div id="campo-nombre" class="hidden">
+            <label for="sesion-nombre" class="block text-xs text-slate-500 dark:text-[#D7DDE3] mb-1">Nombre</label>
+            <input id="sesion-nombre" type="text" autocomplete="name" placeholder="Tu nombre" class="campo-sesion">
+          </div>
+          <div>
+            <label for="sesion-correo" class="block text-xs text-slate-500 dark:text-[#D7DDE3] mb-1">Correo electrónico</label>
+            <input id="sesion-correo" type="email" autocomplete="email" placeholder="tucorreo@ejemplo.com" class="campo-sesion">
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="sesion-clave" class="block text-xs text-slate-500 dark:text-[#D7DDE3]">Contraseña</label>
+              <button type="button" id="btn-olvide" onclick="recuperarClave()" class="text-[11px] text-brand-orange hover:underline">¿La olvidaste?</button>
+            </div>
+            <div class="relative">
+              <input id="sesion-clave" type="password" autocomplete="current-password" placeholder="••••••••" class="campo-sesion pr-10">
+              <!-- El icono (ojo abierto/cerrado) lo pinta alternarVerClave() -->
+              <button type="button" onclick="alternarVerClave()" id="btn-ver-clave" title="Mostrar contraseña" class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded flex items-center justify-center text-slate-400 hover:text-brand-darkBg dark:hover:text-white"></button>
+            </div>
+          </div>
+          <div id="campo-clave2" class="hidden">
+            <label for="sesion-clave2" class="block text-xs text-slate-500 dark:text-[#D7DDE3] mb-1">Confirmar contraseña</label>
+            <input id="sesion-clave2" type="password" autocomplete="new-password" placeholder="Repite la contraseña" class="campo-sesion">
+          </div>
+
+          <p id="sesion-error" class="hidden text-[11px] text-red-500"></p>
+          <p id="sesion-info" class="hidden text-[11px] text-emerald-600 dark:text-emerald-400"></p>
+
+          <button type="submit" id="btn-sesion-enviar" class="mt-1 h-9 rounded-lg bg-brand-orange text-brand-darkBg text-sm font-semibold hover:bg-[#FFB68C] active:scale-[0.98] transition-all disabled:opacity-60 disabled:pointer-events-none">Iniciar sesión</button>
+        </form>
+
+        <!-- Separador -->
+        <div class="flex items-center gap-3 my-4 text-[11px] text-slate-400 dark:text-[#777]">
+          <span class="flex-1 h-px bg-brand-slate dark:bg-brand-darkBorder"></span>o<span class="flex-1 h-px bg-brand-slate dark:bg-brand-darkBorder"></span>
+        </div>
+
+        <!-- Google -->
+        <button type="button" id="btn-google" onclick="entrarConGoogle()" class="w-full h-9 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-white dark:bg-brand-darkBg text-sm font-medium text-brand-darkBg dark:text-[#FFF7F2] flex items-center justify-center gap-2.5 hover:bg-brand-slate/30 dark:hover:bg-brand-darkSurface active:scale-[0.98] transition-all disabled:opacity-60 disabled:pointer-events-none">
+          <svg class="w-4 h-4" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+          Continuar con Google
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Menú de acciones (móvil): hoja que sube desde abajo; tocar fuera la cierra -->
+  <div id="menu-acciones" onclick="if (event.target === this) cerrarMenuAcciones()" class="fixed inset-0 bg-black/60 modal-overlay flex items-end justify-center hidden z-50 backdrop-blur-[2px]">
+    <div class="animate-sheet w-full max-w-md bg-brand-cream dark:bg-brand-darkSurface border-t border-x border-brand-slate dark:border-brand-darkBorder rounded-t-2xl px-3 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl">
+      <div class="w-10 h-1 rounded-full bg-brand-slate dark:bg-brand-darkBorder mx-auto mb-3"></div>
+      <div class="px-3 pb-3 mb-1 border-b border-brand-slate dark:border-brand-darkBorder">
+        <p id="menu-acciones-titulo" class="text-sm font-semibold truncate text-brand-darkBg dark:text-[#FFF7F2]"></p>
+        <p id="menu-acciones-subtitulo" class="text-xs text-slate-500 dark:text-[#888888] mt-0.5"></p>
+      </div>
+      <div id="menu-acciones-lista" class="flex flex-col text-sm"></div>
+    </div>
+  </div>
+
+  <!-- Indicadores al arrastrar (los coloca mostrarIndicador()) -->
+  <div id="ind-dentro" class="ind-dentro" aria-hidden="true">
+    <svg>
+      <defs>
+        <!-- Máscara que "dibuja" el contorno: un trazo blanco que se va completando -->
+        <mask id="ind-mascara" maskUnits="userSpaceOnUse" x="-10" y="-10" width="5000" height="5000">
+          <rect class="ind-trazo" pathLength="1"></rect>
+        </mask>
+      </defs>
+      <rect class="ind-hormigas" mask="url(#ind-mascara)"></rect>
+      <rect class="ind-destello" pathLength="100" mask="url(#ind-mascara)"></rect>
+    </svg>
+  </div>
+  <div id="ind-linea" class="ind-linea" aria-hidden="true"></div>
+
+  <!-- Aviso flotante (confirmaciones breves) -->
+  <div id="aviso" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-lg text-xs shadow-xl bg-brand-darkBg text-[#FFF7F2] border border-brand-darkBorder dark:bg-brand-cream dark:text-brand-darkBg dark:border-brand-slate"></div>
+
+  <div id="modal-confirmar" class="fixed inset-0 bg-black/60 modal-overlay flex items-center justify-center hidden z-50 backdrop-blur-[2px] p-4">
+    <div class="bg-brand-cream dark:bg-brand-darkSurface border border-brand-slate dark:border-brand-darkBorder w-full max-w-sm rounded-lg p-5 shadow-2xl flex flex-col gap-4 animate-pop">
+      <div class="flex justify-between items-center border-b border-brand-slate dark:border-brand-darkBorder pb-2">
+        <h3 class="font-display font-semibold text-lg leading-tight text-brand-darkBg dark:text-[#FFF7F2]">Confirmar Acción</h3>
+        <button onclick="cerrarModalConfirmar()" class="text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-colors">✕</button>
+      </div>
+      <p id="modal-confirmar-mensaje" class="text-xs text-slate-600 dark:text-[#D7DDE3]">¿Está seguro de realizar esta acción?</p>
+      <div class="flex justify-end gap-2 text-xs pt-1">
+        <button onclick="cerrarModalConfirmar()" class="glow-button px-3 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface text-brand-darkBg dark:text-[#D7DDE3]">Cancelar</button>
+        <button id="btn-confirmar-accion" class="glow-button px-3 py-1.5 bg-red-600 text-white font-medium rounded hover:bg-red-700 active:scale-95">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-editor" class="fixed inset-0 bg-black/60 modal-overlay flex items-center justify-center hidden z-50 backdrop-blur-[2px] p-4">
+    <div class="bg-brand-cream dark:bg-brand-darkSurface border border-brand-slate dark:border-brand-darkBorder w-full max-w-2xl rounded-lg p-5 shadow-2xl flex flex-col gap-4 animate-pop">
+      <div class="flex justify-between items-center border-b border-brand-slate dark:border-brand-darkBorder pb-3">
+        <h3 id="editor-titulo" class="font-display font-semibold text-lg leading-tight text-brand-darkBg dark:text-[#FFF7F2] truncate">Ver Archivo</h3>
+        <button onclick="cerrarEditor()" class="text-slate-400 hover:text-brand-darkBg dark:hover:text-white transition-colors">✕</button>
+      </div>
+      <div id="editor-contenedor-preview" class="w-full h-80 flex items-center justify-center overflow-auto border border-brand-slate dark:border-brand-darkBorder rounded bg-white dark:bg-brand-darkBg">
+        <textarea id="editor-contenido" class="w-full h-full p-3 bg-transparent font-mono text-base sm:text-xstext-brand-darkBg dark:text-[#FFF7F2] resize-none focus:outline-none hidden" placeholder="Escribe el contenido aquí..."></textarea>
+        <div id="editor-media-preview" class="hidden w-full h-full flex items-center justify-center p-2"></div>
+      </div>
+      <div class="flex justify-end gap-2 text-xs">
+        <button onclick="descargarArchivo()" class="glow-button px-4 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface text-brand-darkBg dark:text-[#D7DDE3]">Descargar</button>
+        <button onclick="cerrarEditor()" class="glow-button px-4 py-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface text-brand-darkBg dark:text-[#D7DDE3]">Cerrar</button>
+        <button id="btn-guardar-archivo" onclick="guardarArchivo()" class="glow-button px-4 py-1.5 bg-brand-orange text-brand-darkBg font-semibold rounded active:scale-95">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =============================================================
+    // CONFIGURACIÓN DE FIREBASE (inicio de sesión)
+    // Pega aquí el bloque "firebaseConfig" que te da la consola de Firebase:
+    //   Configuración del proyecto → Tus apps → App web → Configuración del SDK.
+    // Estos valores NO son secretos: están pensados para ir dentro de la página.
+    // Mientras sigan con "PEGA_AQUI", la ventana de sesión avisará de que falta configurarlo.
+    // =============================================================
+    window.FIREBASE_CONFIG = {
+      apiKey: "AIzaSyBrCapJdA80k7WvED3dFCfiNXwfsJQ5Duc",
+      authDomain: "servidor-de-archivos-db686.firebaseapp.com",
+      projectId: "servidor-de-archivos-db686",
+      appId: "1:105451954595:web:9d7a136ad54b35c9ab3a16",
+    };
+    window.firebaseConfigurado = !Object.values(window.FIREBASE_CONFIG).some(v => !v || v === 'PEGA_AQUI');
+
+    // -------------------------------------------------------------
+    // 1. SHADER CANVAS (FRACTAL MONOCROMÁTICO DE FONDO)
+    // -------------------------------------------------------------
+    const canvas = document.getElementById('bg-canvas');
+    const ctx = canvas.getContext('2d');
+    let width, height;
+
+    function resizeCanvas() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    let tiempo = 0;
+
+    function renderShaderFractal() {
+      ctx.clearRect(0, 0, width, height);
+      const isDark = document.documentElement.classList.contains('dark');
+      
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const radiusBase = Math.min(width, height) * 0.4;
+
+      ctx.save();
+      ctx.translate(centerX, centerY);
+
+      const totalPoints = 280;
+      ctx.lineWidth = 1.2;
+
+      for (let i = 0; i < totalPoints; i++) {
+        const angle = (i / totalPoints) * Math.PI * 2;
+        const r = radiusBase * (0.65 + 0.35 * Math.sin(angle * 5 + tiempo) * Math.cos(angle * 3 - tiempo * 0.5));
+        
+        const x1 = Math.cos(angle) * r;
+        const y1 = Math.sin(angle) * r;
+
+        const connectAngle = angle * 3.5 + tiempo * 0.2;
+        const x2 = Math.cos(connectAngle) * (r * 0.45);
+        const y2 = Math.sin(connectAngle) * (r * 0.45);
+
+        const alpha = 0.25 + 0.2 * Math.sin(angle * 8 + tiempo);
+        // Modo oscuro: gris frío de la paleta (#D7DDE3) en lugar de blanco puro, que tiraba a cálido
+        ctx.strokeStyle = isDark ? `rgba(215, 221, 227, ${alpha * 0.35})` : `rgba(18, 19, 22, ${alpha * 0.3})`;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        if (i % 8 === 0) {
+          ctx.fillStyle = isDark ? 'rgba(215, 221, 227, 0.4)' : 'rgba(18, 19, 22, 0.4)';
+          ctx.beginPath();
+          ctx.arc(x1, y1, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      ctx.restore();
+      tiempo += 0.006;
+      requestAnimationFrame(renderShaderFractal);
+    }
+    renderShaderFractal();
+
+    // -------------------------------------------------------------
+    // 2. ICONOS VECTORIALES (SVG)
+    // -------------------------------------------------------------
+    const svgCarpeta = `<svg class="w-4 h-4 text-slate-600 dark:text-[#D7DDE3] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>`;
+    const svgArchivo = `<svg class="w-4 h-4 text-slate-600 dark:text-[#D7DDE3] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V7.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 1H7a2 2 0 00-2 2v16a2 2 0 002 2z"></path></svg>`;
+    const svgLapiz = `<svg class="w-3.5 h-3.5 text-slate-700 dark:text-[#D7DDE3] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" fill="#FFA777" fill-opacity="0.25"/><path d="M15 5l4 4" stroke-width="2"/><path d="M17 3l4 4" fill="#FFD0B3"/></svg>`;
+    const svgOjo = `<svg class="w-3.5 h-3.5 text-slate-600 dark:text-[#D7DDE3] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>`;
+    const svgMover = `<svg class="w-3.5 h-3.5 text-slate-600 dark:text-[#D7DDE3] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>`;
+    const svgBorrar = `<svg class="w-3.5 h-3.5 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+    const svgMas = `<svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>`;
+
+    // -------------------------------------------------------------
+    // 2b. PANTALLAS TÁCTILES
+    // -------------------------------------------------------------
+    // En táctil no hay doble clic fiable: se abre con un toque. Con ratón, doble clic.
+    const esTactil = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
+    function asignarApertura(el, item) {
+      const abrir = item.tipo === 'carpeta'
+        ? () => abrirCarpeta(item.indexOriginal)
+        : () => abrirEditor(item.indexOriginal);
+      if (esTactil) el.onclick = abrir;
+      else el.ondblclick = abrir;
+    }
+
+    // Menú inferior con las acciones de un elemento (en móvil sustituye a la fila de botones)
+    function abrirMenuAcciones(index) {
+      const elemento = obtenerCarpetaActual().contenido[index];
+      const esCarpeta = elemento.tipo === 'carpeta';
+      document.getElementById('menu-acciones-titulo').textContent = elemento.nombre;
+      document.getElementById('menu-acciones-subtitulo').textContent =
+        describirTipo(elemento) + (esCarpeta ? '' : ' · ' + formatearTamano(elemento.tamano));
+
+      const opciones = [
+        esCarpeta
+          ? { texto: 'Abrir', icono: svgCarpeta, accion: () => abrirCarpeta(index) }
+          : { texto: 'Ver / Editar', icono: svgOjo, accion: () => abrirEditor(index) },
+        { texto: 'Renombrar', icono: svgLapiz, accion: () => renombrarElemento(index) },
+        { texto: 'Mover', icono: svgMover, accion: () => abrirModalMoverIndividual(index) },
+        { texto: 'Eliminar', icono: svgBorrar, accion: () => eliminarIndividual(index), peligro: true },
+      ];
+
+      const lista = document.getElementById('menu-acciones-lista');
+      lista.innerHTML = '';
+      opciones.forEach(op => {
+        const btn = document.createElement('button');
+        btn.className = 'flex items-center gap-3 w-full px-3 py-3 rounded-lg text-left transition-colors active:bg-brand-slate/50 dark:active:bg-brand-darkBorder ' +
+          (op.peligro ? 'text-red-500' : 'text-brand-darkBg dark:text-[#FFF7F2]');
+        btn.innerHTML = `${op.icono.replace(/w-3\.5 h-3\.5|w-4 h-4/, 'w-5 h-5')}<span>${op.texto}</span>`;
+        btn.onclick = () => { cerrarMenuAcciones(); op.accion(); };
+        lista.appendChild(btn);
+      });
+
+      mostrarModal('menu-acciones');
+    }
+
+    function cerrarMenuAcciones() {
+      ocultarModal('menu-acciones');
+    }
+
+    // -------------------------------------------------------------
+    // 3. ESTADO GLOBAL
+    // -------------------------------------------------------------
+    // Nombre que se muestra para la carpeta principal (ruta, modal de mover, avisos).
+    // Cámbialo aquí y se actualiza en toda la página.
+    const NOMBRE_RAIZ = 'Mis archivos';
+
+    let sistemaArchivos = { nombre: NOMBRE_RAIZ, tipo: 'carpeta', contenido: [] };
+    let rutaActual = [];
+    let seleccionados = new Set();
+    // Orden de la vista. columna 'manual' = orden personalizado (el que deja el usuario al arrastrar).
+    // Se recuerda en el navegador para que el orden personalizado no se pierda al recargar.
+    let ordenActual = { columna: 'nombre', ascendente: true };
+    try {
+      const guardado = JSON.parse(localStorage.getItem('orden'));
+      if (guardado && guardado.columna) ordenActual = guardado;
+    } catch (e) {}
+    function guardarOrden() {
+      try { localStorage.setItem('orden', JSON.stringify(ordenActual)); } catch (e) {}
+    }
+    let archivoEnEdicion = null;
+    let elementosAMoverIndices = [];
+    let callbackConfirmar = null;
+    let renombrarIndex = null;
+    let modoVistaActual = 'lista';
+    let indicesVisibles = [];
+    // Animar la entrada de los elementos solo al cambiar de carpeta o de vista
+    // (no al buscar ni al ordenar, donde sería molesto)
+    let animarEntrada = true;
+
+    // -------------------------------------------------------------
+    // 4. CONTROL DE TEMA Y VISTAS
+    // -------------------------------------------------------------
+    // El icono muestra el tema actual: luna = oscuro, sol = claro
+    // Hay dos botones de tema (barra de la app y portada): se actualizan los dos por clase
+    function actualizarBotonTema() {
+      const oscuro = document.documentElement.classList.contains('dark');
+      document.querySelectorAll('.icono-sol').forEach(i => i.classList.toggle('hidden', oscuro));
+      document.querySelectorAll('.icono-luna').forEach(i => i.classList.toggle('hidden', !oscuro));
+      document.getElementById('btn-tema').title = oscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+    }
+
+    function toggleTema() {
+      const oscuro = document.documentElement.classList.toggle('dark');
+      try { localStorage.setItem('tema', oscuro ? 'oscuro' : 'claro'); } catch (e) {}
+      actualizarBotonTema();
+
+      // Reiniciar la animación de giro en los iconos que quedan visibles
+      document.querySelectorAll(oscuro ? '.icono-luna' : '.icono-sol').forEach(icono => {
+        icono.classList.remove('giro-tema');
+        void icono.offsetWidth;
+        icono.classList.add('giro-tema');
+      });
+    }
+
+    // -------------------------------------------------------------
+    // 4b. MODALES CON ANIMACIÓN DE ENTRADA Y SALIDA
+    // -------------------------------------------------------------
+    const DURACION_CIERRE_MODAL = 180; // igual que .cerrando en el CSS
+    const temporizadoresModal = {};
+
+    function mostrarModal(id) {
+      const el = document.getElementById(id);
+      clearTimeout(temporizadoresModal[id]);
+      el.classList.remove('cerrando', 'hidden');
+    }
+
+    function ocultarModal(id) {
+      const el = document.getElementById(id);
+      if (!modalAbierto(id)) return;
+      el.classList.add('cerrando');
+      temporizadoresModal[id] = setTimeout(() => {
+        el.classList.add('hidden');
+        el.classList.remove('cerrando');
+      }, DURACION_CIERRE_MODAL);
+    }
+
+    function modalAbierto(id) {
+      const el = document.getElementById(id);
+      return !el.classList.contains('hidden') && !el.classList.contains('cerrando');
+    }
+
+    actualizarBotonTema();
+
+    function setModoVista(modo) {
+      modoVistaActual = modo;
+      const btnLista = document.getElementById('btn-view-list');
+      const btnGrid6 = document.getElementById('btn-view-grid6');
+      const btnGrid4 = document.getElementById('btn-view-grid4');
+
+      const activeClasses = ['bg-brand-orange', 'text-brand-darkBg', 'shadow', 'font-semibold'];
+      const inactiveClasses = ['text-slate-400'];
+      const botones = { lista: btnLista, grid6: btnGrid6, grid4: btnGrid4 };
+
+      // Quitar el gris del botón activo; si no, el icono queda casi invisible sobre el naranja
+      Object.entries(botones).forEach(([clave, b]) => {
+        const activo = clave === modo;
+        b.classList.remove(...(activo ? inactiveClasses : activeClasses));
+        b.classList.add(...(activo ? activeClasses : inactiveClasses));
+      });
+
+      animarEntrada = true;
+
+      renderizar();
+    }
+
+    // -------------------------------------------------------------
+    // 5. NAVEGACIÓN Y UTILIDADES
+    // -------------------------------------------------------------
+    function obtenerCarpetaActual() {
+      let actual = sistemaArchivos;
+      for (let idx of rutaActual) {
+        actual = actual.contenido[idx];
+      }
+      return actual;
+    }
+
+    function formatearFecha(date) {
+      const d = new Date(date);
+      return d.toLocaleDateString('es-ES', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatearTamano(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Evita que nombres como "<img onerror=...>" se interpreten como HTML
+    function escaparHTML(texto) {
+      return String(texto)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function describirTipo(item) {
+      if (item.tipo === 'carpeta') return 'Carpeta';
+      const punto = item.nombre.lastIndexOf('.');
+      const ext = punto > 0 ? item.nombre.slice(punto + 1).toUpperCase() : '';
+      const mime = item.tipo || '';
+      let categoria = 'Archivo';
+      if (mime.startsWith('image/')) categoria = 'Imagen';
+      else if (mime.startsWith('video/')) categoria = 'Video';
+      else if (mime.startsWith('audio/')) categoria = 'Audio';
+      else if (mime === 'application/pdf') categoria = 'Documento';
+      else if (mime.startsWith('text/') || item.esTexto) categoria = 'Texto';
+      else if (/zip|rar|7z|tar|gzip/.test(mime)) categoria = 'Comprimido';
+      return ext ? `${categoria} ${ext}` : categoria;
+    }
+
+    function nombreExiste(carpeta, nombre, excluir = null) {
+      const n = nombre.toLowerCase();
+      return carpeta.contenido.some(item => item !== excluir && item.nombre.toLowerCase() === n);
+    }
+
+    // Devuelve "foto (1).png", "foto (2).png"... si el nombre ya está ocupado
+    function nombreUnico(carpeta, nombre, excluir = null) {
+      if (!nombreExiste(carpeta, nombre, excluir)) return nombre;
+      const punto = nombre.lastIndexOf('.');
+      const base = punto > 0 ? nombre.slice(0, punto) : nombre;
+      const ext = punto > 0 ? nombre.slice(punto) : '';
+      let i = 1;
+      while (nombreExiste(carpeta, `${base} (${i})${ext}`, excluir)) i++;
+      return `${base} (${i})${ext}`;
+    }
+
+    function crearUrlPreview(item) {
+      if (item.blob && item.tipo && (item.tipo.startsWith('image/') || item.tipo.startsWith('video/'))) {
+        item.urlPreview = URL.createObjectURL(item.blob);
+      }
+    }
+
+    // Libera la memoria de las vistas previas de un elemento (y de su contenido si es carpeta)
+    function revocarUrls(item) {
+      if (item.urlPreview) URL.revokeObjectURL(item.urlPreview);
+      if (item.tipo === 'carpeta') item.contenido.forEach(revocarUrls);
+    }
+
+    // -------------------------------------------------------------
+    // 5b. PERSISTENCIA (IndexedDB guarda también los archivos binarios)
+    // -------------------------------------------------------------
+    const DB_NOMBRE = 'gestor-archivos';
+    const DB_STORE = 'estado';
+
+    function abrirDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NOMBRE, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    // Copia del árbol sin las URLs temporales (blob:...), que no sobreviven a una recarga
+    function serializar(nodo) {
+      const { urlPreview, indexOriginal, ...resto } = nodo;
+      if (nodo.tipo === 'carpeta') resto.contenido = nodo.contenido.map(serializar);
+      return resto;
+    }
+
+    function hidratar(nodo) {
+      if (nodo.tipo === 'carpeta') nodo.contenido.forEach(hidratar);
+      else crearUrlPreview(nodo);
+      return nodo;
+    }
+
+    // Cada usuario guarda sus archivos con su propia clave dentro del navegador.
+    // Sin sesión se usa 'raiz' (la clave de siempre, así no se pierde lo que ya había).
+    let claveEstado = 'raiz';
+
+    async function guardarEstado() {
+      try {
+        const db = await abrirDB();
+        const tx = db.transaction(DB_STORE, 'readwrite');
+        tx.objectStore(DB_STORE).put(serializar(sistemaArchivos), claveEstado);
+      } catch (err) {
+        console.error('No se pudo guardar el estado:', err);
+      }
+    }
+
+    async function cargarEstado() {
+      try {
+        const db = await abrirDB();
+        const datos = await new Promise((resolve, reject) => {
+          const req = db.transaction(DB_STORE).objectStore(DB_STORE).get(claveEstado);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        if (datos) sistemaArchivos = hidratar(datos);
+      } catch (err) {
+        console.error('No se pudo cargar el estado:', err);
+      }
+    }
+
+    // Guarda y vuelve a pintar; usar después de cualquier cambio en los datos
+    function aplicarCambios() {
+      guardarEstado();
+      renderizar();
+    }
+
+    // -------------------------------------------------------------
+    // 6. RENDERIZADO DE LA INTERFAZ CON CHECKBOXES PERSONALIZADOS
+    // -------------------------------------------------------------
+    // Mensaje para carpetas vacías (lista y cuadrícula)
+    function htmlCarpetaVacia() {
+      return `
+        <div class="flex flex-col items-center justify-center text-center py-14 px-4 text-slate-400 dark:text-[#888888] entrada">
+          <div class="w-14 h-14 rounded-2xl bg-brand-orange/10 text-brand-orange flex items-center justify-center mb-3">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+          </div>
+          <p class="font-display italic text-lg font-medium text-brand-darkBg dark:text-[#FFF7F2]">Está muy vacío por aquí…</p>
+          <p class="text-xs mt-1">Sube un archivo o crea una carpeta para empezar.</p>
+        </div>`;
+    }
+
+    function renderizar() {
+      const tbody = document.getElementById('lista-elementos');
+      const vistaLista = document.getElementById('vista-lista');
+      const vistaGrid = document.getElementById('vista-grid');
+      const carpetaActual = obtenerCarpetaActual();
+
+      tbody.innerHTML = '';
+      vistaGrid.innerHTML = '';
+      seleccionados.clear();
+      actualizarContador();
+
+      renderizarRuta();
+      document.getElementById('btn-atras').disabled = rutaActual.length === 0;
+
+      const animar = animarEntrada;
+      animarEntrada = false;
+      const aplicarEntrada = (el, i) => {
+        if (!animar) return;
+        el.classList.add('entrada');
+        el.style.animationDelay = `${Math.min(i, 12) * 25}ms`;
+      };
+
+      let items = carpetaActual.contenido.map((item, index) => ({ ...item, indexOriginal: index }));
+
+      const valorOrden = (item) => {
+        if (ordenActual.columna === 'tipo') return describirTipo(item).toLowerCase();
+        const v = item[ordenActual.columna];
+        return typeof v === 'string' ? v.toLowerCase() : v;
+      };
+
+      // En orden personalizado se respeta el orden guardado en los datos tal cual
+      if (ordenActual.columna !== 'manual') items.sort((a, b) => {
+        const aCarpeta = a.tipo === 'carpeta', bCarpeta = b.tipo === 'carpeta';
+        if (aCarpeta !== bCarpeta) return aCarpeta ? -1 : 1;
+        let valA = valorOrden(a);
+        let valB = valorOrden(b);
+
+        if (valA < valB) return ordenActual.ascendente ? -1 : 1;
+        if (valA > valB) return ordenActual.ascendente ? 1 : -1;
+        return 0;
+      });
+
+      // Solo los elementos visibles (tras la búsqueda) pueden seleccionarse con "todos"
+      indicesVisibles = items.map(item => item.indexOriginal);
+      document.getElementById('check-todos').classList.remove('checked');
+
+      const manual = ordenActual.columna === 'manual';
+      const chip = document.getElementById('chip-orden');
+      chip.classList.toggle('hidden', !manual);
+      chip.classList.toggle('flex', manual);
+
+      if (modoVistaActual === 'lista') {
+        vistaLista.classList.remove('hidden');
+        vistaGrid.classList.add('hidden');
+
+        if (items.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6">${htmlCarpetaVacia()}</td></tr>`;
+          return;
+        }
+
+        items.forEach((item, i) => {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-white/60 dark:hover:bg-brand-darkSurface/80 transition-colors border-b border-brand-slate/30 dark:border-brand-darkBorder/40 cursor-pointer';
+          aplicarEntrada(tr, i);
+
+          const esCarpeta = item.tipo === 'carpeta';
+          let elementoIcono = esCarpeta ? svgCarpeta : svgArchivo;
+          
+          if (item.urlPreview) {
+            if (item.tipo.startsWith('image/')) {
+              elementoIcono = `<img src="${item.urlPreview}" draggable="false" class="w-6 h-6 object-cover rounded mr-2 inline border border-brand-slate dark:border-brand-darkBorder">`;
+            } else if (item.tipo.startsWith('video/')) {
+              elementoIcono = `<div class="relative w-6 h-6 mr-2 inline flex-shrink-0"><video src="${item.urlPreview}" class="w-6 h-6 object-cover rounded border border-brand-slate dark:border-brand-darkBorder"></video><div class="absolute inset-0 flex items-center justify-center bg-black/30 rounded text-[8px] text-white">▶</div></div>`;
+            }
+          }
+
+          asignarApertura(tr, item);
+          configurarArrastre(tr, item);
+
+          tr.innerHTML = `
+            <td class="p-2 sm:p-3 text-center" onclick="event.stopPropagation()">
+              <div id="check-${item.indexOriginal}" onclick="toggleSeleccion(${item.indexOriginal})" class="custom-checkbox border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkBg/50 mx-auto">
+                <svg class="w-3 h-3 text-brand-darkBg stroke-current check-icon" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+              </div>
+            </td>
+            <td class="p-2 sm:p-3 font-medium text-brand-darkBg dark:text-[#FFF7F2]">
+              <span class="hover:underline inline-flex items-center gap-1.5">
+                ${elementoIcono} <span class="break-all sm:break-normal">${escaparHTML(item.nombre)}</span>
+              </span>
+              <!-- En pantallas pequeñas, tipo y tamaño van debajo del nombre -->
+              <div class="md:hidden mt-0.5 text-[10px] font-normal text-slate-500 dark:text-[#888888]">${escaparHTML(describirTipo(item))}${esCarpeta ? '' : ' · ' + formatearTamano(item.tamano)}</div>
+            </td>
+            <td class="hidden md:table-cell p-3 text-slate-500 dark:text-[#D7DDE3]">${escaparHTML(describirTipo(item))}</td>
+            <td class="hidden md:table-cell p-3 text-slate-500 dark:text-[#D7DDE3]">${formatearFecha(item.fecha)}</td>
+            <td class="hidden sm:table-cell p-3 text-slate-500 dark:text-[#D7DDE3] text-right font-mono">${esCarpeta ? '--' : formatearTamano(item.tamano)}</td>
+            <td class="p-2 sm:p-3 text-center" onclick="event.stopPropagation()">
+              <div class="hidden sm:flex justify-center items-center gap-1.5">
+                ${esCarpeta ? '' : `<button title="Ver/Editar" onclick="abrirEditor(${item.indexOriginal})" class="glow-button flex items-center justify-center p-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface active:scale-90">${svgOjo}</button>`}
+                <button title="Renombrar" onclick="renombrarElemento(${item.indexOriginal})" class="glow-button flex items-center justify-center p-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface active:scale-90">${svgLapiz}</button>
+                <button title="Mover" onclick="abrirModalMoverIndividual(${item.indexOriginal})" class="glow-button flex items-center justify-center p-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-white dark:hover:bg-brand-darkSurface active:scale-90">${svgMover}</button>
+                <button title="Borrar" onclick="eliminarIndividual(${item.indexOriginal})" class="glow-button flex items-center justify-center p-1.5 border border-brand-slate dark:border-brand-darkBorder rounded hover:bg-red-500/10 active:scale-90">${svgBorrar}</button>
+              </div>
+              <button title="Acciones" onclick="abrirMenuAcciones(${item.indexOriginal})" class="sm:hidden w-8 h-8 inline-flex items-center justify-center rounded-md text-slate-500 dark:text-[#D7DDE3] active:bg-brand-slate/50 dark:active:bg-brand-darkBorder">${svgMas}</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+      } else {
+        vistaLista.classList.add('hidden');
+        vistaGrid.classList.remove('hidden');
+        vistaGrid.className = modoVistaActual === 'grid6'
+          ? 'grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3 p-1 sm:p-2'
+          : 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 p-1 sm:p-2';
+
+        if (items.length === 0) {
+          vistaGrid.innerHTML = `<div class="col-span-full">${htmlCarpetaVacia()}</div>`;
+          return;
+        }
+
+        items.forEach((item, i) => {
+          const card = document.createElement('div');
+          card.className = 'border border-brand-slate dark:border-brand-darkBorder rounded-lg p-2 sm:p-3bg-white/50 dark:bg-brand-darkSurface/60 backdrop-blur-[2px] flex flex-col justify-between hover:border-brand-orange tarjeta cursor-pointer group relative';
+          aplicarEntrada(card, i);
+
+          const esCarpeta = item.tipo === 'carpeta';
+          asignarApertura(card, item);
+          configurarArrastre(card, item);
+
+          // Iconos grandes en la cuadrícula; las carpetas en naranja para distinguirlas como destino
+          const iconoGrande = esCarpeta
+            ? svgCarpeta.replace('w-4 h-4 text-slate-600 dark:text-[#D7DDE3]', 'w-10 h-10 text-brand-orange')
+            : svgArchivo.replace('w-4 h-4', 'w-9 h-9');
+          let previewContainer = `<div class="w-full h-20 sm:h-24flex items-center justify-center bg-white/40 dark:bg-brand-darkBg/50 rounded mb-2 pointer-events-none">${iconoGrande}</div>`;
+          if (item.urlPreview) {
+            if (item.tipo.startsWith('image/')) {
+              previewContainer = `<div class="w-full h-20 sm:h-24rounded mb-2 overflow-hidden bg-black/40 flex items-center justify-center pointer-events-none"><img src="${item.urlPreview}" draggable="false" class="max-h-full max-w-full object-cover"></div>`;
+            } else if (item.tipo.startsWith('video/')) {
+              previewContainer = `<div class="w-full h-20 sm:h-24rounded mb-2 overflow-hidden bg-black/40 flex items-center justify-center relative pointer-events-none"><video src="${item.urlPreview}" class="max-h-full max-w-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/30 rounded text-xs text-white">▶</div></div>`;
+            }
+          }
+
+          card.innerHTML = `
+            <div class="absolute top-2 left-2 z-10" onclick="event.stopPropagation()">
+              <div id="check-${item.indexOriginal}" onclick="toggleSeleccion(${item.indexOriginal})" class="custom-checkbox border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkBg/50">
+                <svg class="w-3 h-3 text-brand-darkBg stroke-current check-icon" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+              </div>
+            </div>
+            ${previewContainer}
+            <div class="truncate text-xs font-medium text-brand-darkBg dark:text-[#FFF7F2] mb-1" title="${escaparHTML(item.nombre)}">${escaparHTML(item.nombre)}</div>
+            <div class="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#D7DDE3] border-t border-brand-slate/40 dark:border-brand-darkBorder/40 pt-2 mt-auto">
+              <span>${esCarpeta ? '--' : formatearTamano(item.tamano)}</span>
+              <button title="Acciones" onclick="event.stopPropagation(); abrirMenuAcciones(${item.indexOriginal})" class="sm:hidden w-7 h-7 -my-1 -mr-1.5 flex items-center justify-center rounded-md active:bg-brand-slate/50 dark:active:bg-brand-darkBorder">${svgMas}</button>
+              <div class="hidden sm:flex items-center gap-1" onclick="event.stopPropagation()">
+                ${esCarpeta ? '' : `<button title="Ver/Editar" onclick="abrirEditor(${item.indexOriginal})" class="p-1 rounded hover:bg-white dark:hover:bg-brand-darkSurface flex items-center justify-center">${svgOjo}</button>`}
+                <button title="Renombrar" onclick="renombrarElemento(${item.indexOriginal})" class="p-1 rounded hover:bg-white dark:hover:bg-brand-darkSurface flex items-center justify-center">${svgLapiz}</button>
+                <button title="Mover" onclick="abrirModalMoverIndividual(${item.indexOriginal})" class="p-1 rounded hover:bg-white dark:hover:bg-brand-darkSurface flex items-center justify-center">${svgMover}</button>
+                <button title="Borrar" onclick="eliminarIndividual(${item.indexOriginal})" class="p-1 rounded hover:bg-red-500/10 flex items-center justify-center">${svgBorrar}</button>
+              </div>
+            </div>
+          `;
+          vistaGrid.appendChild(card);
+        });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 7. GESTIÓN DE ACCIONES Y SELECCIÓN
+    // -------------------------------------------------------------
+    function activarSelectorArchivo() {
+      document.getElementById('input-subir-archivo').click();
+    }
+
+    function procesarArchivosSubidos(event) {
+      const archivos = event.target.files;
+      if (!archivos || archivos.length === 0) return;
+
+      const carpetaActual = obtenerCarpetaActual();
+
+      Array.from(archivos).forEach(file => {
+        const esTexto = file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.json') || file.name.endsWith('.md') || file.name.endsWith('.js') || file.name.endsWith('.html') || file.name.endsWith('.css');
+        
+        // Los binarios guardan el archivo original en "blob"; "contenido" solo es texto editable
+        const nuevoArchivo = {
+          nombre: file.name,
+          tipo: file.type || 'archivo',
+          fecha: new Date(file.lastModified || Date.now()),
+          tamano: file.size,
+          esTexto: esTexto,
+          contenido: null,
+          blob: esTexto ? null : file,
+          urlPreview: null
+        };
+
+        crearUrlPreview(nuevoArchivo);
+
+        // El nombre se resuelve al insertar, así dos subidas simultáneas no chocan
+        const insertar = () => {
+          nuevoArchivo.nombre = nombreUnico(carpetaActual, nuevoArchivo.nombre);
+          carpetaActual.contenido.push(nuevoArchivo);
+          aplicarCambios();
+        };
+
+        if (esTexto) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            nuevoArchivo.contenido = e.target.result;
+            insertar();
+          };
+          reader.readAsText(file);
+        } else {
+          insertar();
+        }
+      });
+
+      event.target.value = '';
+    }
+
+    function mostrarErrorCrear(mensaje) {
+      const error = document.getElementById('modal-crear-error');
+      error.textContent = mensaje;
+      error.classList.toggle('hidden', !mensaje);
+    }
+
+    function abrirModalCrear() {
+      renombrarIndex = null;
+      const titulo = document.getElementById('modal-crear-titulo');
+      const input = document.getElementById('input-nombre-nuevo');
+
+      titulo.textContent = 'Nueva Carpeta';
+      input.value = '';
+      input.placeholder = 'Ejemplo: Documentos';
+      mostrarErrorCrear('');
+
+      mostrarModal('modal-crear');
+      setTimeout(() => input.focus(), 50);
+    }
+
+    function renombrarElemento(index) {
+      const carpeta = obtenerCarpetaActual();
+      const elemento = carpeta.contenido[index];
+      renombrarIndex = index;
+
+      const titulo = document.getElementById('modal-crear-titulo');
+      const input = document.getElementById('input-nombre-nuevo');
+
+      titulo.textContent = elemento.tipo === 'carpeta' ? 'Renombrar Carpeta' : 'Renombrar Archivo';
+      input.value = elemento.nombre;
+      mostrarErrorCrear('');
+
+      mostrarModal('modal-crear');
+      setTimeout(() => {
+        input.focus();
+        // En archivos, seleccionar solo el nombre sin la extensión
+        const punto = elemento.nombre.lastIndexOf('.');
+        if (elemento.tipo !== 'carpeta' && punto > 0) input.setSelectionRange(0, punto);
+        else input.select();
+      }, 50);
+    }
+
+    function cerrarModalCrear() {
+      ocultarModal('modal-crear');
+      renombrarIndex = null;
+    }
+
+    function confirmarCreacion() {
+      const input = document.getElementById('input-nombre-nuevo');
+      let nombre = input.value.trim();
+
+      if (nombre === '') {
+        mostrarErrorCrear('El nombre no puede estar vacío.');
+        return;
+      }
+      if (/[\/\\]/.test(nombre)) {
+        mostrarErrorCrear('El nombre no puede contener / ni \\.');
+        return;
+      }
+
+      const carpeta = obtenerCarpetaActual();
+      const elementoRenombrado = renombrarIndex !== null ? carpeta.contenido[renombrarIndex] : null;
+
+      if (nombreExiste(carpeta, nombre, elementoRenombrado)) {
+        mostrarErrorCrear(`Ya existe un elemento llamado "${nombre}" en esta carpeta.`);
+        return;
+      }
+
+      if (elementoRenombrado) {
+        elementoRenombrado.nombre = nombre;
+        elementoRenombrado.fecha = new Date();
+      } else {
+        carpeta.contenido.push({
+          nombre: nombre,
+          tipo: 'carpeta',
+          fecha: new Date(),
+          tamano: 0,
+          contenido: []
+        });
+      }
+      cerrarModalCrear();
+      aplicarCambios();
+    }
+
+    function abrirModalMoverIndividual(index) {
+      elementosAMoverIndices = [index];
+      poblarModalMover();
+    }
+
+    function abrirModalMoverMasivo() {
+      if (seleccionados.size > 0) {
+        elementosAMoverIndices = Array.from(seleccionados);
+        poblarModalMover();
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 7b. MOVER: lógica común, modal con árbol y arrastrar y soltar
+    // -------------------------------------------------------------
+    let destinoMover = null;          // carpeta elegida en el árbol del modal
+    let arbolExpandidos = new Set();  // carpetas desplegadas en el árbol
+    let arrastre = null;              // { indices } mientras se arrastra algo
+
+    function contieneNodo(carpeta, buscado) {
+      return carpeta.contenido.some(i => i === buscado || (i.tipo === 'carpeta' && contieneNodo(i, buscado)));
+    }
+
+    // Un destino es inválido si es la carpeta actual, uno de los elementos o algo dentro de ellos
+    function esDestinoValido(destino, indices) {
+      const origen = obtenerCarpetaActual();
+      if (!destino || destino === origen) return false;
+      return !indices.some(i => {
+        const el = origen.contenido[i];
+        return el === destino || (el.tipo === 'carpeta' && contieneNodo(el, destino));
+      });
+    }
+
+    function moverElementos(indices, destino) {
+      if (!esDestinoValido(destino, indices)) return false;
+      const origen = obtenerCarpetaActual();
+      const elementos = indices.map(i => origen.contenido[i]);
+      // Quitar de mayor a menor índice para no desplazar los que faltan
+      [...indices].sort((a, b) => b - a).forEach(i => origen.contenido.splice(i, 1));
+      elementos.forEach(el => {
+        el.nombre = nombreUnico(destino, el.nombre);
+        destino.contenido.push(el);
+      });
+      aplicarCambios();
+      return true;
+    }
+
+    function moverConAviso(indices, destino) {
+      const n = indices.length;
+      if (moverElementos(indices, destino)) {
+        const nombre = destino === sistemaArchivos ? NOMBRE_RAIZ : destino.nombre;
+        mostrarAviso(`${n === 1 ? '1 elemento movido' : `${n} elementos movidos`} a "${nombre}"`);
+      }
+    }
+
+    let temporizadorAviso = null;
+    function mostrarAviso(texto) {
+      const aviso = document.getElementById('aviso');
+      aviso.textContent = texto;
+      aviso.classList.remove('hidden', 'ocultando', 'mostrando');
+      void aviso.offsetWidth; // reiniciar la animación si ya estaba visible
+      aviso.classList.add('mostrando');
+      clearTimeout(temporizadorAviso);
+      temporizadorAviso = setTimeout(() => {
+        aviso.classList.replace('mostrando', 'ocultando');
+        temporizadorAviso = setTimeout(() => aviso.classList.add('hidden'), 200);
+      }, 2500);
+    }
+
+    // --- Modal con árbol de carpetas ---
+    function poblarModalMover() {
+      const carpetaActual = obtenerCarpetaActual();
+      const elementos = elementosAMoverIndices.map(i => carpetaActual.contenido[i]);
+
+      // ¿Existe al menos un destino posible?
+      let hayDestino = false;
+      (function buscar(nodo) {
+        if (hayDestino) return;
+        if (esDestinoValido(nodo, elementosAMoverIndices)) { hayDestino = true; return; }
+        nodo.contenido.forEach(i => { if (i.tipo === 'carpeta' && !elementos.includes(i)) buscar(i); });
+      })(sistemaArchivos);
+
+      if (!hayDestino) {
+        solicitarConfirmacion('No hay otra carpeta a la que mover estos elementos. Crea una carpeta primero.', null, 'Entendido');
+        elementosAMoverIndices = [];
+        return;
+      }
+
+      const n = elementos.length;
+      document.getElementById('mover-titulo').textContent = n === 1 ? 'Mover 1 elemento' : `Mover ${n} elementos`;
+      const nombres = elementos.slice(0, 2).map(e => `"${e.nombre}"`).join(', ');
+      document.getElementById('mover-subtitulo').textContent = n > 2 ? `${nombres} y ${n - 2} más` : nombres;
+
+      // Desplegar todo si el árbol es pequeño; si no, solo el camino hasta la carpeta actual
+      destinoMover = null;
+      arbolExpandidos = new Set([sistemaArchivos]);
+      let totalCarpetas = 0;
+      (function contar(nodo) { nodo.contenido.forEach(i => { if (i.tipo === 'carpeta') { totalCarpetas++; contar(i); } }); })(sistemaArchivos);
+      if (totalCarpetas <= 25) {
+        (function expandir(nodo) { arbolExpandidos.add(nodo); nodo.contenido.forEach(i => { if (i.tipo === 'carpeta') expandir(i); }); })(sistemaArchivos);
+      } else {
+        let cursor = sistemaArchivos;
+        rutaActual.forEach(idx => { cursor = cursor.contenido[idx]; arbolExpandidos.add(cursor); });
+      }
+
+      renderArbolMover();
+      mostrarModal('modal-mover');
+    }
+
+    function renderArbolMover() {
+      const cont = document.getElementById('arbol-mover');
+      const scroll = cont.scrollTop;
+      cont.innerHTML = '';
+      const carpetaActual = obtenerCarpetaActual();
+      const elementos = elementosAMoverIndices.map(i => carpetaActual.contenido[i]);
+      let rutaDestinoTexto = 'ninguno';
+
+      const pintar = (nodo, nombre, profundidad, rutaTexto) => {
+        // Las carpetas que se están moviendo no aparecen (ni su contenido)
+        const subcarpetas = nodo.contenido.filter(i => i.tipo === 'carpeta' && !elementos.includes(i));
+        const expandido = arbolExpandidos.has(nodo);
+        const esActual = nodo === carpetaActual;
+        const elegido = nodo === destinoMover;
+        if (elegido) rutaDestinoTexto = rutaTexto;
+
+        const fila = document.createElement('div');
+        fila.style.paddingLeft = `${profundidad * 16 + 4}px`;
+        fila.className = 'flex items-center gap-1.5 pr-2 py-1.5 rounded-md transition-colors ' + (
+          esActual ? 'opacity-50 cursor-not-allowed text-slate-500 dark:text-[#888888]'
+          : elegido ? 'bg-brand-orange/25 text-brand-darkBg dark:text-white font-semibold cursor-pointer'
+          : 'text-brand-darkBg dark:text-[#FFF7F2] hover:bg-brand-slate/50 dark:hover:bg-brand-darkSurface cursor-pointer'
+        );
+
+        const chevron = subcarpetas.length
+          ? `<button class="w-5 h-5 flex items-center justify-center rounded hover:bg-brand-slate/60 dark:hover:bg-brand-darkBorder flex-shrink-0" data-toggle>
+               <svg class="w-3 h-3 transition-transform ${expandido ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path></svg>
+             </button>`
+          : `<span class="w-5 flex-shrink-0"></span>`;
+        const icono = profundidad === 0
+          ? `<svg class="w-4 h-4 flex-shrink-0 ${elegido ? 'text-brand-orange' : 'text-slate-500 dark:text-[#D7DDE3]'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>`
+          : svgCarpeta.replace('text-slate-600 dark:text-[#D7DDE3]', elegido ? 'text-brand-orange' : 'text-slate-500 dark:text-[#D7DDE3]');
+
+        fila.innerHTML = `${chevron}${icono}<span class="truncate">${escaparHTML(nombre)}</span>${esActual ? '<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-brand-slate/60 dark:bg-brand-darkBorder flex-shrink-0">actual</span>' : ''}`;
+
+        const toggle = fila.querySelector('[data-toggle]');
+        if (toggle) toggle.onclick = (e) => {
+          e.stopPropagation();
+          expandido ? arbolExpandidos.delete(nodo) : arbolExpandidos.add(nodo);
+          renderArbolMover();
+        };
+        if (!esActual) {
+          fila.onclick = () => { destinoMover = nodo; renderArbolMover(); };
+          fila.ondblclick = () => { destinoMover = nodo; confirmarMover(); };
+        }
+        cont.appendChild(fila);
+
+        if (expandido) subcarpetas.forEach(s => pintar(s, s.nombre, profundidad + 1, `${rutaTexto}${s.nombre}/`));
+      };
+
+      pintar(sistemaArchivos, NOMBRE_RAIZ, 0, '/');
+      cont.scrollTop = scroll;
+
+      document.getElementById('mover-destino-ruta').textContent = rutaDestinoTexto;
+      document.getElementById('btn-confirmar-mover').disabled = !destinoMover;
+    }
+
+    function cerrarModalMover() {
+      ocultarModal('modal-mover');
+      elementosAMoverIndices = [];
+      destinoMover = null;
+    }
+
+    function confirmarMover() {
+      if (elementosAMoverIndices.length > 0 && destinoMover) {
+        const indices = elementosAMoverIndices;
+        const destino = destinoMover;
+        cerrarModalMover();
+        moverConAviso(indices, destino);
+      }
+    }
+
+    // --- Arrastrar y soltar ---
+    // Si el elemento arrastrado está seleccionado, se mueven todos los seleccionados
+    function configurarArrastre(el, item) {
+      el.draggable = true;
+      el.dataset.index = item.indexOriginal;
+
+      el.addEventListener('dragstart', (e) => {
+        const indices = seleccionados.has(item.indexOriginal) ? Array.from(seleccionados) : [item.indexOriginal];
+        const estado = { indices };
+        arrastre = estado;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.nombre);
+
+        const fantasma = crearFantasmaArrastre(indices.length === 1 ? item.nombre : `${indices.length} elementos`);
+        e.dataTransfer.setDragImage(fantasma, 14, 14);
+        setTimeout(() => fantasma.remove(), 0);
+
+        // Atenuar después de que el navegador capture la imagen de arrastre
+        // (solo si este arrastre sigue activo; si ya terminó, los índices pueden ser otros)
+        requestAnimationFrame(() => {
+          if (arrastre !== estado) return;
+          indices.forEach(i => {
+            const nodo = document.querySelector(`[data-index="${i}"]`);
+            if (nodo) nodo.classList.add('arrastrando');
+          });
+        });
+      });
+      el.addEventListener('dragend', terminarArrastre);
+
+      hacerDestinoElemento(el, item);
+    }
+
+    // ¿En qué zona del elemento está el cursor?
+    //   Lista: se mide de arriba a abajo. Cuadrícula: de izquierda a derecha (las tarjetas van en fila).
+    //   Carpeta: 25 % de cada borde = recolocar antes/después; el 50 % central = meter dentro.
+    //   Archivo: no puede contener nada, así que solo antes (primera mitad) o después (segunda mitad).
+    const BORDE_CARPETA = 0.25;
+    function zonaSoltar(el, e, item) {
+      const r = el.getBoundingClientRect();
+      const pos = el.tagName === 'TR'
+        ? (e.clientY - r.top) / r.height
+        : (e.clientX - r.left) / r.width;
+      if (item.tipo === 'carpeta') {
+        if (pos < BORDE_CARPETA) return 'antes';
+        if (pos > 1 - BORDE_CARPETA) return 'despues';
+        return 'dentro';
+      }
+      return pos < 0.5 ? 'antes' : 'despues';
+    }
+
+    function limpiarIndicador(el) {
+      el.classList.remove('destino-activo', 'soltar-antes', 'soltar-despues');
+    }
+
+    // Cada elemento de la lista/cuadrícula acepta lo que se suelta encima:
+    // dentro (si es carpeta) o antes/después (para recolocar)
+    function hacerDestinoElemento(el, item) {
+      const idx = item.indexOriginal;
+
+      el.addEventListener('dragover', (e) => {
+        if (!arrastre || arrastre.indices.includes(idx)) return;
+        const zona = zonaSoltar(el, e, item);
+        if (zona === 'dentro' && !esDestinoValido(obtenerCarpetaActual().contenido[idx], arrastre.indices)) {
+          limpiarIndicador(el);
+          if (indicadorActual.el === el) ocultarIndicador();
+          return;
+        }
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        limpiarIndicador(el);
+        el.classList.add(zona === 'dentro' ? 'destino-activo' : `soltar-${zona}`);
+        mostrarIndicador(el, zona);
+      });
+      el.addEventListener('dragleave', (e) => {
+        if (!el.contains(e.relatedTarget)) {
+          limpiarIndicador(el);
+          if (indicadorActual.el === el) ocultarIndicador();
+        }
+      });
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (!arrastre || arrastre.indices.includes(idx)) return;
+        const zona = zonaSoltar(el, e, item);
+        const indices = arrastre.indices;
+        terminarArrastre();
+        if (zona === 'dentro') moverConAviso(indices, obtenerCarpetaActual().contenido[idx]);
+        else reordenar(indices, idx, zona);
+      });
+    }
+
+    // Recoloca los elementos arrastrados justo antes o después del elemento objetivo.
+    // Primero copia en los datos el orden que se ve en pantalla (por si estaba ordenado por nombre, etc.)
+    // y después activa el orden personalizado para que se respete.
+    function reordenar(indices, objetivo, zona) {
+      const carpeta = obtenerCarpetaActual();
+      const objetivoObj = carpeta.contenido[objetivo];
+
+      // Orden actual en pantalla (y, por seguridad, cualquier elemento que no estuviera visible al final)
+      const enPantalla = indicesVisibles.map(i => carpeta.contenido[i]);
+      carpeta.contenido.forEach(o => { if (!enPantalla.includes(o)) enPantalla.push(o); });
+
+      const movidos = enPantalla.filter(o => indices.includes(carpeta.contenido.indexOf(o)));
+      const resto = enPantalla.filter(o => !movidos.includes(o));
+      const posicion = resto.indexOf(objetivoObj) + (zona === 'despues' ? 1 : 0);
+      resto.splice(posicion, 0, ...movidos);
+      carpeta.contenido = resto;
+
+      const eraManual = ordenActual.columna === 'manual';
+      ordenActual = { columna: 'manual', ascendente: true };
+      guardarOrden();
+      aplicarCambios();
+      mostrarAviso(eraManual ? 'Orden actualizado' : 'Orden personalizado activado');
+    }
+
+    // Destinos de la barra de ruta (solo "meter dentro")
+    function hacerDestino(el, destino) {
+      el.addEventListener('dragover', (e) => {
+        if (!arrastre || !esDestinoValido(destino, arrastre.indices)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('destino-activo');
+        mostrarIndicador(el, 'dentro');
+      });
+      el.addEventListener('dragleave', (e) => {
+        if (!el.contains(e.relatedTarget)) {
+          el.classList.remove('destino-activo');
+          if (indicadorActual.el === el) ocultarIndicador();
+        }
+      });
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (!arrastre) return;
+        const indices = arrastre.indices;
+        terminarArrastre();
+        moverConAviso(indices, destino);
+      });
+    }
+
+    function terminarArrastre() {
+      arrastre = null;
+      document.querySelectorAll('.arrastrando').forEach(n => n.classList.remove('arrastrando'));
+      document.querySelectorAll('.destino-activo, .soltar-antes, .soltar-despues').forEach(limpiarIndicador);
+      ocultarIndicador();
+    }
+
+    // --- Indicadores animados (contorno que se dibuja / línea de carga) ---
+    // dragover se dispara muchas veces por segundo: la animación solo se reinicia
+    // cuando cambia el elemento o la zona; si no, solo se actualiza la posición.
+    let indicadorActual = { el: null, zona: null };
+
+    function reiniciarAnimacion(nodo) {
+      nodo.classList.remove('animar');
+      void nodo.offsetWidth;
+      nodo.classList.add('animar');
+    }
+
+    function mostrarIndicador(el, zona) {
+      const r = el.getBoundingClientRect();
+      const dentro = document.getElementById('ind-dentro');
+      const linea = document.getElementById('ind-linea');
+      const cambio = indicadorActual.el !== el || indicadorActual.zona !== zona;
+      indicadorActual = { el, zona };
+
+      if (zona === 'dentro') {
+        linea.classList.remove('visible');
+        Object.assign(dentro.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+        if (cambio) {
+          // Las filas de la tabla no tienen esquinas redondeadas; se usan 6 px para que quede bonito
+          const radio = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 6;
+          dentro.querySelectorAll('rect').forEach(rc => {
+            rc.setAttribute('x', 1);
+            rc.setAttribute('y', 1);
+            rc.setAttribute('width', Math.max(r.width - 2, 0));
+            rc.setAttribute('height', Math.max(r.height - 2, 0));
+            rc.setAttribute('rx', Math.min(radio, 12));
+          });
+          reiniciarAnimacion(dentro);
+          dentro.classList.add('visible');
+        }
+        return;
+      }
+
+      // Línea antes/después. En la lista es horizontal (arriba/abajo de la fila);
+      // en la cuadrícula es vertical y va en el hueco entre tarjetas.
+      dentro.classList.remove('visible');
+      const vertical = el.tagName !== 'TR';
+      const grosor = 3;
+      let pos;
+      if (vertical) {
+        const hueco = parseFloat(getComputedStyle(el.parentElement).columnGap) || 12;
+        const x = zona === 'antes' ? r.left - hueco / 2 : r.right + hueco / 2;
+        pos = { left: x - grosor / 2, top: r.top, width: grosor, height: r.height };
+      } else {
+        const y = zona === 'antes' ? r.top : r.bottom;
+        pos = { left: r.left, top: y - grosor / 2, width: r.width, height: grosor };
+      }
+      Object.assign(linea.style, { left: `${pos.left}px`, top: `${pos.top}px`, width: `${pos.width}px`, height: `${pos.height}px` });
+      linea.classList.toggle('vertical', vertical);
+      if (cambio) {
+        reiniciarAnimacion(linea);
+        linea.classList.add('visible');
+      }
+    }
+
+    function ocultarIndicador() {
+      document.getElementById('ind-dentro').classList.remove('visible', 'animar');
+      document.getElementById('ind-linea').classList.remove('visible', 'animar');
+      indicadorActual = { el: null, zona: null };
+    }
+
+    function crearFantasmaArrastre(texto) {
+      const g = document.createElement('div');
+      g.textContent = texto;
+      g.style.cssText = 'position:fixed;top:-1000px;left:-1000px;padding:6px 12px;border-radius:8px;background:#FFA777;color:#121316;font:600 12px system-ui,sans-serif;box-shadow:0 6px 16px rgba(0,0,0,.35);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;';
+      document.body.appendChild(g);
+      return g;
+    }
+
+    // --- Ruta clicable (y destino para subir elementos de nivel) ---
+    function renderizarRuta() {
+      const nav = document.getElementById('ruta-actual');
+      nav.innerHTML = '';
+
+      const segmentos = [{ nombre: NOMBRE_RAIZ, nodo: sistemaArchivos, nivel: 0 }];
+      let cursor = sistemaArchivos;
+      rutaActual.forEach((idx, i) => {
+        cursor = cursor.contenido[idx];
+        segmentos.push({ nombre: cursor.nombre, nodo: cursor, nivel: i + 1 });
+      });
+
+      segmentos.forEach((seg, i) => {
+        if (i > 0) {
+          const sep = document.createElement('span');
+          sep.className = 'text-slate-300 dark:text-[#555]';
+          sep.textContent = '/';
+          nav.appendChild(sep);
+        }
+        const esUltimo = i === segmentos.length - 1;
+        const btn = document.createElement('button');
+        btn.textContent = seg.nombre;
+        btn.className = 'px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ' + (esUltimo
+          ? 'text-brand-darkBg dark:text-[#FFF7F2] font-semibold cursor-default'
+          : 'hover:bg-brand-slate/50 dark:hover:bg-brand-darkSurface hover:text-brand-darkBg dark:hover:text-white');
+        if (!esUltimo) {
+          btn.onclick = () => { rutaActual = rutaActual.slice(0, seg.nivel); animarEntrada = true; renderizar(); };
+          hacerDestino(btn, seg.nodo);
+        }
+        nav.appendChild(btn);
+      });
+    }
+
+    // Sin callback funciona como aviso informativo (botón naranja, solo cierra)
+    function solicitarConfirmacion(mensaje, callback, textoBoton = 'Eliminar') {
+      const btn = document.getElementById('btn-confirmar-accion');
+      const esPeligro = typeof callback === 'function';
+      document.getElementById('modal-confirmar-mensaje').textContent = mensaje;
+      btn.textContent = textoBoton;
+      btn.classList.toggle('bg-red-600', esPeligro);
+      btn.classList.toggle('hover:bg-red-700', esPeligro);
+      btn.classList.toggle('text-white', esPeligro);
+      btn.classList.toggle('bg-brand-orange', !esPeligro);
+      btn.classList.toggle('text-brand-darkBg', !esPeligro);
+      callbackConfirmar = callback;
+      mostrarModal('modal-confirmar');
+    }
+
+    function cerrarModalConfirmar() {
+      ocultarModal('modal-confirmar');
+      callbackConfirmar = null;
+    }
+
+    document.getElementById('btn-confirmar-accion').onclick = function() {
+      if (callbackConfirmar) callbackConfirmar();
+      cerrarModalConfirmar();
+    };
+
+    function abrirCarpeta(index) {
+      rutaActual.push(index);
+      animarEntrada = true;
+      renderizar();
+    }
+
+    function subirNivel() {
+      if (rutaActual.length > 0) {
+        rutaActual.pop();
+        animarEntrada = true;
+        renderizar();
+      }
+    }
+
+    function toggleSeleccion(index) {
+      const box = document.getElementById(`check-${index}`);
+      if (seleccionados.has(index)) {
+        seleccionados.delete(index);
+        if (box) box.classList.remove('checked');
+      } else {
+        seleccionados.add(index);
+        if (box) box.classList.add('checked');
+      }
+      actualizarContador();
+    }
+
+    // Solo marca/desmarca lo que se ve en pantalla (respeta la búsqueda)
+    function toggleSeleccionarTodos() {
+      const masterBox = document.getElementById('check-todos');
+      const debeMarcar = !masterBox.classList.contains('checked');
+
+      indicesVisibles.forEach(idx => {
+        const box = document.getElementById(`check-${idx}`);
+        if (debeMarcar) {
+          seleccionados.add(idx);
+          if (box) box.classList.add('checked');
+        } else {
+          seleccionados.delete(idx);
+          if (box) box.classList.remove('checked');
+        }
+      });
+      actualizarContador();
+    }
+
+    function actualizarContador() {
+      const btnMover = document.getElementById('btn-mover-masivo');
+      const btnEliminar = document.getElementById('btn-eliminar-masivo');
+      const contadorText = document.getElementById('contador-seleccionados');
+      const masterBox = document.getElementById('check-todos');
+
+      contadorText.textContent = `${seleccionados.size} seleccionado${seleccionados.size === 1 ? '' : 's'}`;
+      const deshabilitado = seleccionados.size === 0;
+
+      btnMover.disabled = deshabilitado;
+      btnEliminar.disabled = deshabilitado;
+
+      // La casilla general queda marcada solo si todos los visibles están seleccionados
+      const todosMarcados = indicesVisibles.length > 0 && indicesVisibles.every(idx => seleccionados.has(idx));
+      masterBox.classList.toggle('checked', todosMarcados);
+    }
+
+    function eliminarMasivo() {
+      if (seleccionados.size > 0) {
+        const n = seleccionados.size;
+        solicitarConfirmacion(`¿Desea eliminar ${n === 1 ? 'el elemento seleccionado' : `los ${n} elementos seleccionados`}?`, () => {
+          const carpeta = obtenerCarpetaActual();
+          const indicesAEliminar = Array.from(seleccionados).sort((a, b) => b - a);
+          indicesAEliminar.forEach(idx => revocarUrls(carpeta.contenido.splice(idx, 1)[0]));
+          aplicarCambios();
+        });
+      }
+    }
+
+    function eliminarIndividual(index) {
+      const carpeta = obtenerCarpetaActual();
+      const elemento = carpeta.contenido[index];
+      const extra = elemento.tipo === 'carpeta' && elemento.contenido.length > 0 ? ' y todo su contenido' : '';
+      solicitarConfirmacion(`¿Desea eliminar "${elemento.nombre}"${extra}?`, () => {
+        revocarUrls(carpeta.contenido.splice(index, 1)[0]);
+        aplicarCambios();
+      });
+    }
+
+    function ordenarPor(columna) {
+      if (ordenActual.columna === columna) {
+        ordenActual.ascendente = !ordenActual.ascendente;
+      } else {
+        ordenActual.columna = columna;
+        ordenActual.ascendente = true;
+      }
+      guardarOrden();
+      renderizar();
+    }
+
+    // Etiqueta "Orden personalizado ✕": quita el orden manual y vuelve a ordenar por nombre
+    function quitarOrdenPersonalizado() {
+      ordenActual = { columna: 'nombre', ascendente: true };
+      guardarOrden();
+      animarEntrada = true;
+      renderizar();
+    }
+
+    // -------------------------------------------------------------
+    // 8. BÚSQUEDA GLOBAL (todas las carpetas, resultados en un panel)
+    // -------------------------------------------------------------
+    const MAX_RESULTADOS = 50;
+    let resultadosActuales = [];
+    let resultadoActivo = 0;
+
+    // Recorre todo el árbol y devuelve cada coincidencia con la ruta a su carpeta
+    function buscarEnTodo(texto) {
+      const resultados = [];
+      (function recorrer(nodo, rutaIndices, rutaNombres) {
+        nodo.contenido.forEach((item, idx) => {
+          if (item.nombre.toLowerCase().includes(texto)) {
+            resultados.push({ item, rutaPadre: rutaIndices, ubicacion: rutaNombres, index: idx });
+          }
+          if (item.tipo === 'carpeta') recorrer(item, [...rutaIndices, idx], [...rutaNombres, item.nombre]);
+        });
+      })(sistemaArchivos, [], [NOMBRE_RAIZ]);
+
+      // Primero los que empiezan por el texto, luego carpetas, luego por nombre
+      return resultados.sort((a, b) => {
+        const aEmpieza = a.item.nombre.toLowerCase().startsWith(texto);
+        const bEmpieza = b.item.nombre.toLowerCase().startsWith(texto);
+        if (aEmpieza !== bEmpieza) return aEmpieza ? -1 : 1;
+        const aCarpeta = a.item.tipo === 'carpeta', bCarpeta = b.item.tipo === 'carpeta';
+        if (aCarpeta !== bCarpeta) return aCarpeta ? -1 : 1;
+        return a.item.nombre.localeCompare(b.item.nombre, 'es');
+      });
+    }
+
+    // Nombre con la parte buscada resaltada (escapando el HTML de cada trozo)
+    function resaltarCoincidencia(nombre, texto) {
+      const i = nombre.toLowerCase().indexOf(texto);
+      if (i < 0) return escaparHTML(nombre);
+      return escaparHTML(nombre.slice(0, i))
+        + `<mark class="coincidencia">${escaparHTML(nombre.slice(i, i + texto.length))}</mark>`
+        + escaparHTML(nombre.slice(i + texto.length));
+    }
+
+    function actualizarBusqueda() {
+      const texto = document.getElementById('input-buscar').value.trim().toLowerCase();
+      const panel = document.getElementById('resultados-busqueda');
+      if (!texto) {
+        cerrarResultados();
+        return;
+      }
+
+      resultadosActuales = buscarEnTodo(texto);
+      resultadoActivo = 0;
+      const total = resultadosActuales.length;
+      document.getElementById('resultados-cabecera').textContent = total === 0
+        ? 'Sin resultados'
+        : `${total} resultado${total === 1 ? '' : 's'}${total > MAX_RESULTADOS ? ` (mostrando ${MAX_RESULTADOS})` : ''}`;
+
+      const lista = document.getElementById('resultados-lista');
+      lista.innerHTML = '';
+
+      if (total === 0) {
+        lista.innerHTML = `<p class="px-3 pb-2 text-xs text-slate-500 dark:text-[#888888]">No hay archivos ni carpetas que contengan "${escaparHTML(texto)}".</p>`;
+      }
+
+      resultadosActuales.slice(0, MAX_RESULTADOS).forEach((r, i) => {
+        const esCarpeta = r.item.tipo === 'carpeta';
+        let icono = esCarpeta
+          ? svgCarpeta.replace('text-slate-600 dark:text-[#D7DDE3]', 'text-brand-orange')
+          : svgArchivo;
+        if (r.item.urlPreview && r.item.tipo.startsWith('image/')) {
+          icono = `<img src="${r.item.urlPreview}" draggable="false" class="w-4 h-4 object-cover rounded-sm flex-shrink-0">`;
+        }
+
+        const fila = document.createElement('button');
+        fila.type = 'button';
+        fila.dataset.resultado = i;
+        fila.className = 'resultado w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors';
+        fila.innerHTML = `
+          ${icono}
+          <span class="min-w-0 flex-1">
+            <span class="block truncate font-medium text-brand-darkBg dark:text-[#FFF7F2]">${resaltarCoincidencia(r.item.nombre, texto)}</span>
+            <span class="block truncate text-[11px] text-slate-500 dark:text-[#888888]">${escaparHTML(r.ubicacion.join(' / '))}</span>
+          </span>
+          <span class="text-[10px] text-slate-400 dark:text-[#777] flex-shrink-0">${escaparHTML(describirTipo(r.item))}</span>`;
+        fila.onmouseenter = () => marcarResultadoActivo(i);
+        fila.onclick = () => irAResultado(r);
+        lista.appendChild(fila);
+      });
+
+      marcarResultadoActivo(0);
+      panel.classList.remove('hidden');
+    }
+
+    function marcarResultadoActivo(i) {
+      resultadoActivo = i;
+      document.querySelectorAll('#resultados-lista .resultado').forEach(f => {
+        const activo = +f.dataset.resultado === i;
+        f.classList.toggle('bg-brand-orange/15', activo);
+        if (activo) f.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function cerrarResultados() {
+      document.getElementById('resultados-busqueda').classList.add('hidden');
+      resultadosActuales = [];
+    }
+
+    // Flechas para moverse, Enter para abrir, Escape para salir
+    function teclaBuscador(e) {
+      const visibles = Math.min(resultadosActuales.length, MAX_RESULTADOS);
+      if (e.key === 'ArrowDown' && visibles) {
+        e.preventDefault();
+        marcarResultadoActivo((resultadoActivo + 1) % visibles);
+      } else if (e.key === 'ArrowUp' && visibles) {
+        e.preventDefault();
+        marcarResultadoActivo((resultadoActivo - 1 + visibles) % visibles);
+      } else if (e.key === 'Enter' && visibles) {
+        e.preventDefault();
+        irAResultado(resultadosActuales[resultadoActivo]);
+      }
+    }
+
+    // Carpeta: se abre. Archivo: se abre su carpeta y se resalta el archivo.
+    function irAResultado(r) {
+      const input = document.getElementById('input-buscar');
+      input.value = '';
+      input.blur();
+      cerrarResultados();
+
+      const esCarpeta = r.item.tipo === 'carpeta';
+      rutaActual = esCarpeta ? [...r.rutaPadre, r.index] : [...r.rutaPadre];
+      animarEntrada = true;
+      renderizar();
+
+      if (!esCarpeta) {
+        const el = document.querySelector(`[data-index="${r.index}"]`);
+        if (el) {
+          el.scrollIntoView({ block: 'nearest' });
+          // Esperar a que termine la animación de entrada antes de resaltar
+          setTimeout(() => {
+            el.classList.remove('entrada');
+            el.classList.add('resaltado');
+            setTimeout(() => el.classList.remove('resaltado'), 1800);
+          }, 350);
+        }
+      }
+    }
+
+    // Cerrar el panel al tocar o hacer clic fuera del buscador
+    document.addEventListener('pointerdown', (e) => {
+      if (!document.getElementById('buscador').contains(e.target)) cerrarResultados();
+    });
+
+    function abrirEditor(index) {
+      const carpeta = obtenerCarpetaActual();
+      const elemento = carpeta.contenido[index];
+      const textarea = document.getElementById('editor-contenido');
+      const preview = document.getElementById('editor-media-preview');
+      const btnGuardar = document.getElementById('btn-guardar-archivo');
+
+      if (elemento.tipo === 'carpeta') return;
+
+      archivoEnEdicion = elemento;
+      document.getElementById('editor-titulo').textContent = `Ver / Editar: ${elemento.nombre}`;
+      
+      textarea.classList.add('hidden');
+      preview.classList.add('hidden');
+      preview.innerHTML = '';
+      btnGuardar.classList.add('hidden');
+
+      if (elemento.urlPreview) {
+        if (elemento.tipo.startsWith('image/')) {
+          preview.innerHTML = `<img src="${elemento.urlPreview}" class="max-h-full max-w-full object-contain rounded">`;
+          preview.classList.remove('hidden');
+        } else if (elemento.tipo.startsWith('video/')) {
+          preview.innerHTML = `<video src="${elemento.urlPreview}" controls class="max-h-full max-w-full rounded"></video>`;
+          preview.classList.remove('hidden');
+        }
+      } else if (elemento.esTexto && typeof elemento.contenido === 'string') {
+        textarea.value = elemento.contenido;
+        textarea.classList.remove('hidden');
+        btnGuardar.classList.remove('hidden');
+      } else {
+        preview.innerHTML = `<div class="text-xs text-slate-400 dark:text-[#888888] text-center">Vista previa no disponible para este tipo de archivo (${escaparHTML(describirTipo(elemento))}).<br>Puedes descargarlo con el botón "Descargar".</div>`;
+        preview.classList.remove('hidden');
+      }
+
+      mostrarModal('panel-editor');
+    }
+
+    function guardarArchivo() {
+      if (archivoEnEdicion && archivoEnEdicion.esTexto) {
+        archivoEnEdicion.contenido = document.getElementById('editor-contenido').value;
+        archivoEnEdicion.tamano = new Blob([archivoEnEdicion.contenido]).size;
+        archivoEnEdicion.fecha = new Date();
+        cerrarEditor();
+        aplicarCambios();
+      }
+    }
+
+    function descargarArchivo() {
+      const elemento = archivoEnEdicion;
+      if (!elemento) return;
+
+      // Si es texto se descarga lo que hay en el editor (aunque no se haya guardado)
+      const datos = elemento.esTexto
+        ? new Blob([document.getElementById('editor-contenido').value], { type: elemento.tipo || 'text/plain' })
+        : elemento.blob;
+      if (!datos) return;
+
+      const url = URL.createObjectURL(datos);
+      const enlace = document.createElement('a');
+      enlace.href = url;
+      enlace.download = elemento.nombre;
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function cerrarEditor() {
+      archivoEnEdicion = null;
+      ocultarModal('panel-editor');
+    }
+
+    // Volver a la carpeta principal (al pulsar el logo de la barra superior)
+    function irARaiz() {
+      if (rutaActual.length === 0) return;
+      rutaActual = [];
+      animarEntrada = true;
+      renderizar();
+    }
+
+    // -------------------------------------------------------------
+    // 9. INICIO DE SESIÓN (Firebase Authentication)
+    // -------------------------------------------------------------
+    // "window.servicioAuth" lo crea el <script type="module"> del final cuando Firebase carga.
+    let usuarioActual = null;
+    let pestanaSesion = 'entrar';
+
+    const svgOjoAbierto = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>`;
+    const svgOjoCerrado = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>`;
+
+    function abrirModalSesion(pestana = 'entrar') {
+      document.getElementById('form-sesion').reset();
+      cambiarPestanaSesion(pestana);
+      mostrarAvisoConfig();
+      mostrarModal('modal-sesion');
+      setTimeout(() => document.getElementById(pestana === 'registro' ? 'sesion-nombre' : 'sesion-correo').focus(), 60);
+    }
+
+    function cerrarModalSesion() {
+      ocultarModal('modal-sesion');
+    }
+
+    function cambiarPestanaSesion(pestana) {
+      pestanaSesion = pestana;
+      const registro = pestana === 'registro';
+      const activa = ['bg-brand-orange', 'text-brand-darkBg', 'shadow-sm'];
+      const inactiva = ['text-slate-500', 'dark:text-[#D7DDE3]'];
+      document.getElementById('tab-entrar').classList.remove(...(registro ? activa : inactiva));
+      document.getElementById('tab-entrar').classList.add(...(registro ? inactiva : activa));
+      document.getElementById('tab-registro').classList.remove(...(registro ? inactiva : activa));
+      document.getElementById('tab-registro').classList.add(...(registro ? activa : inactiva));
+
+      document.getElementById('campo-nombre').classList.toggle('hidden', !registro);
+      document.getElementById('campo-clave2').classList.toggle('hidden', !registro);
+      document.getElementById('btn-olvide').classList.toggle('hidden', registro);
+      document.getElementById('sesion-clave').autocomplete = registro ? 'new-password' : 'current-password';
+      document.getElementById('sesion-titulo').textContent = registro ? 'Crea tu cuenta' : 'Bienvenido de nuevo';
+      document.getElementById('sesion-subtitulo').textContent = registro ? 'Solo te llevará un momento.' : 'Entra para ver tus archivos.';
+      document.getElementById('btn-sesion-enviar').textContent = registro ? 'Crear cuenta' : 'Iniciar sesión';
+      document.querySelectorAll('.campo-sesion').forEach(c => c.classList.remove('invalido'));
+      mostrarMensajeSesion('');
+
+      // Ocultar la contraseña al cambiar de pestaña
+      document.getElementById('sesion-clave').type = 'password';
+      document.getElementById('sesion-clave2').type = 'password';
+      document.getElementById('btn-ver-clave').innerHTML = svgOjoAbierto;
+    }
+
+    function alternarVerClave() {
+      const clave = document.getElementById('sesion-clave');
+      const mostrar = clave.type === 'password';
+      clave.type = mostrar ? 'text' : 'password';
+      document.getElementById('sesion-clave2').type = clave.type;
+      const btn = document.getElementById('btn-ver-clave');
+      btn.innerHTML = mostrar ? svgOjoCerrado : svgOjoAbierto;
+      btn.title = mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña';
+    }
+
+    // tipo: 'error' | 'info' | '' (vacío para ocultar)
+    function mostrarMensajeSesion(texto, tipo = 'error') {
+      const error = document.getElementById('sesion-error');
+      const info = document.getElementById('sesion-info');
+      error.classList.add('hidden');
+      info.classList.add('hidden');
+      if (!texto) return;
+      const el = tipo === 'info' ? info : error;
+      el.textContent = texto;
+      el.classList.remove('hidden');
+    }
+
+    function mostrarAvisoConfig() {
+      const aviso = document.getElementById('sesion-aviso-config');
+      let texto = '';
+      if (!window.firebaseConfigurado) {
+        texto = 'Falta configurar Firebase: pega tu configuración en <b>FIREBASE_CONFIG</b>, al principio del script. Mientras tanto puedes ver la ventana, pero no iniciar sesión.';
+      } else if (location.protocol === 'file:') {
+        texto = 'Abriste la página como archivo. Para que el inicio de sesión funcione, ábrela desde un servidor local (por ejemplo, <b>Live Server</b> en VS Code).';
+      }
+      aviso.innerHTML = texto;
+      aviso.classList.toggle('hidden', !texto);
+    }
+
+    function marcarInvalido(id, mensaje) {
+      document.getElementById(id).classList.add('invalido');
+      mostrarMensajeSesion(mensaje);
+      document.getElementById(id).focus();
+      return false;
+    }
+
+    function validarFormularioSesion(nombre, correo, clave, clave2) {
+      document.querySelectorAll('.campo-sesion').forEach(c => c.classList.remove('invalido'));
+      if (pestanaSesion === 'registro' && !nombre) return marcarInvalido('sesion-nombre', 'Escribe tu nombre.');
+      if (!correo) return marcarInvalido('sesion-correo', 'Escribe tu correo electrónico.');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) return marcarInvalido('sesion-correo', 'El correo no parece válido.');
+      if (!clave) return marcarInvalido('sesion-clave', 'Escribe tu contraseña.');
+      if (pestanaSesion === 'registro') {
+        if (clave.length < 6) return marcarInvalido('sesion-clave', 'La contraseña debe tener al menos 6 caracteres.');
+        if (clave !== clave2) return marcarInvalido('sesion-clave2', 'Las contraseñas no coinciden.');
+      }
+      return true;
+    }
+
+    // Traduce los códigos de error de Firebase a mensajes comprensibles
+    function mensajeErrorAuth(err) {
+      const mensajes = {
+        'auth/invalid-email': 'El correo no es válido.',
+        'auth/invalid-credential': 'Correo o contraseña incorrectos.',
+        'auth/wrong-password': 'Correo o contraseña incorrectos.',
+        'auth/user-not-found': 'Correo o contraseña incorrectos.',
+        'auth/missing-password': 'Escribe tu contraseña.',
+        'auth/email-already-in-use': 'Ya existe una cuenta con ese correo. Prueba a iniciar sesión.',
+        'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
+        'auth/too-many-requests': 'Demasiados intentos. Espera un momento y vuelve a probar.',
+        'auth/network-request-failed': 'No hay conexión. Revisa tu internet.',
+        'auth/popup-blocked': 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes para esta página.',
+        'auth/operation-not-allowed': 'Este método de inicio de sesión no está activado en tu proyecto de Firebase.',
+        'auth/configuration-not-found': 'Authentication no está activado en tu proyecto de Firebase (Authentication → Comenzar).',
+        'auth/unauthorized-domain': 'Este dominio no está autorizado en Firebase (Authentication → Configuración → Dominios autorizados).',
+        'auth/invalid-api-key': 'La configuración de Firebase no es válida. Revisa FIREBASE_CONFIG.',
+      };
+      return mensajes[err && err.code] || `Algo salió mal${err && err.code ? ` (${err.code})` : ''}. Inténtalo de nuevo.`;
+    }
+
+    // Comprueba que Firebase esté listo antes de cualquier acción
+    function authDisponible() {
+      if (window.servicioAuth) return true;
+      mostrarMensajeSesion(window.firebaseConfigurado
+        ? 'Firebase todavía no ha cargado. Revisa tu conexión y vuelve a intentarlo.'
+        : 'Falta configurar Firebase para poder iniciar sesión.');
+      return false;
+    }
+
+    function bloquearBotonesSesion(bloquear, textoCargando) {
+      const enviar = document.getElementById('btn-sesion-enviar');
+      enviar.disabled = bloquear;
+      document.getElementById('btn-google').disabled = bloquear;
+      enviar.textContent = bloquear ? textoCargando : (pestanaSesion === 'registro' ? 'Crear cuenta' : 'Iniciar sesión');
+    }
+
+    async function enviarSesion(e) {
+      e.preventDefault();
+      const nombre = document.getElementById('sesion-nombre').value.trim();
+      const correo = document.getElementById('sesion-correo').value.trim();
+      const clave = document.getElementById('sesion-clave').value;
+      const clave2 = document.getElementById('sesion-clave2').value;
+
+      mostrarMensajeSesion('');
+      if (!validarFormularioSesion(nombre, correo, clave, clave2) || !authDisponible()) return;
+
+      const registro = pestanaSesion === 'registro';
+      bloquearBotonesSesion(true, registro ? 'Creando cuenta…' : 'Entrando…');
+      try {
+        if (registro) {
+          await window.servicioAuth.registrar(nombre, correo, clave);
+          actualizarBarraUsuario(); // el nombre se guarda justo después de crear la cuenta
+        } else {
+          await window.servicioAuth.entrar(correo, clave);
+        }
+        cerrarModalSesion();
+      } catch (err) {
+        mostrarMensajeSesion(mensajeErrorAuth(err));
+      } finally {
+        bloquearBotonesSesion(false);
+      }
+    }
+
+    async function entrarConGoogle() {
+      mostrarMensajeSesion('');
+      if (!authDisponible()) return;
+      bloquearBotonesSesion(true, 'Conectando con Google…');
+      try {
+        await window.servicioAuth.google();
+        cerrarModalSesion();
+      } catch (err) {
+        // Cerrar la ventana de Google no es un error
+        if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+          mostrarMensajeSesion(mensajeErrorAuth(err));
+        }
+      } finally {
+        bloquearBotonesSesion(false);
+      }
+    }
+
+    async function recuperarClave() {
+      const correo = document.getElementById('sesion-correo').value.trim();
+      document.querySelectorAll('.campo-sesion').forEach(c => c.classList.remove('invalido'));
+      if (!correo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+        return marcarInvalido('sesion-correo', 'Escribe tu correo arriba y vuelve a pulsar "¿La olvidaste?".');
+      }
+      if (!authDisponible()) return;
+      try {
+        await window.servicioAuth.recuperar(correo);
+        mostrarMensajeSesion(`Si existe una cuenta con ${correo}, te enviamos un correo para restablecer la contraseña.`, 'info');
+      } catch (err) {
+        mostrarMensajeSesion(mensajeErrorAuth(err));
+      }
+    }
+
+    // Al cerrar sesión se vuelve a la portada (no al modo invitado)
+    async function cerrarSesion() {
+      document.getElementById('menu-usuario').classList.add('hidden');
+      modoInvitado = false;
+      if (window.servicioAuth) await window.servicioAuth.salir();
+    }
+
+    function toggleMenuUsuario() {
+      document.getElementById('menu-usuario').classList.toggle('hidden');
+    }
+
+    // Barra superior: botón "Iniciar sesión" o avatar según haya sesión
+    function actualizarBarraUsuario() {
+      const u = usuarioActual;
+      document.getElementById('btn-iniciar-sesion').classList.toggle('hidden', !!u);
+      document.getElementById('zona-usuario').classList.toggle('hidden', !u);
+      if (!u) return;
+
+      const nombre = u.displayName || u.email.split('@')[0];
+      const btn = document.getElementById('btn-usuario');
+      btn.textContent = '';
+      if (u.photoURL) {
+        const img = document.createElement('img');
+        img.src = u.photoURL;
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer'; // las fotos de Google fallan a veces sin esto
+        img.className = 'w-full h-full object-cover';
+        btn.appendChild(img);
+      } else {
+        // Iniciales del nombre
+        btn.textContent = nombre.split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase();
+      }
+      btn.title = nombre;
+      document.getElementById('menu-usuario-nombre').textContent = nombre;
+      document.getElementById('menu-usuario-correo').textContent = u.email;
+    }
+
+    // La llama Firebase al arrancar y cada vez que alguien entra o sale.
+    // Cambia los archivos visibles a los del usuario (o a los de invitado sin sesión).
+    let sesionResuelta = false;
+    async function alCambiarSesion(usuario) {
+      const mismoUsuario = sesionResuelta && (usuario ? usuario.uid : null) === (usuarioActual ? usuarioActual.uid : null);
+      sesionResuelta = true;
+      usuarioActual = usuario;
+      actualizarBarraUsuario();
+      if (mismoUsuario) {
+        mostrarVista();
+        return;
+      }
+
+      revocarUrls(sistemaArchivos);
+      claveEstado = usuario ? `usuario:${usuario.uid}` : 'raiz';
+      sistemaArchivos = { nombre: NOMBRE_RAIZ, tipo: 'carpeta', contenido: [] };
+      rutaActual = [];
+      cerrarResultados();
+      await cargarEstado();
+      animarEntrada = true;
+      renderizar();
+      mostrarVista();
+
+      if (usuario) mostrarAviso(`Hola, ${usuario.displayName || usuario.email.split('@')[0]}`);
+    }
+    window.alCambiarSesion = alCambiarSesion;
+
+    // -------------------------------------------------------------
+    // 10. PORTADA / APLICACIÓN
+    // -------------------------------------------------------------
+    // Sin sesión se ve la portada, salvo que se haya elegido "continuar sin cuenta".
+    // El modo invitado NO se recuerda: al recargar o volver a abrir la página se ve la portada otra vez.
+    // (Los archivos de invitado sí se conservan.)
+    let modoInvitado = false;
+    // Borrar la marca que guardaban versiones anteriores, para que no salte la portada
+    try { localStorage.removeItem('modoInvitado'); } catch (e) {}
+
+    function mostrarVista() {
+      const enApp = !!usuarioActual || modoInvitado;
+      const portada = document.getElementById('portada');
+      const yaVisible = !portada.classList.contains('hidden');
+      portada.classList.toggle('hidden', enApp);
+      document.getElementById('app').classList.toggle('hidden', !enApp);
+
+      // Repetir la animación de la portada cada vez que aparece
+      if (!enApp && !yaVisible) {
+        portada.querySelectorAll('.aparecer').forEach(el => {
+          el.classList.remove('aparecer');
+          void el.offsetWidth;
+          el.classList.add('aparecer');
+        });
+      }
+    }
+
+    // Demo de la portada: alterna 3 escenas (arrastrar, buscar, crear carpeta).
+    // Las animaciones están en el CSS; aquí solo se cambia la clase .escena-N y la frase de debajo.
+    // La escena siguiente empieza justo cuando termina la animación del cursor (no con un temporizador),
+    // así nunca se cortan a medias, aunque el navegador pause las animaciones al cambiar de pestaña.
+    (function iniciarDemoPortada() {
+      const demo = document.getElementById('demo-gestor');
+      const pie = document.getElementById('demo-pie');
+      const cursor = demo && demo.querySelector('.dm-cursor');
+      if (!demo || !cursor || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+      const frases = [
+        'Arrastra un archivo sobre una carpeta y listo.',
+        'Busca en todas tus carpetas al instante.',
+        'Crea carpetas y mantén todo en orden.',
+      ];
+      let escena = 0;
+
+      cursor.addEventListener('animationend', () => {
+        escena = (escena + 1) % frases.length;
+        demo.classList.remove('escena-1', 'escena-2', 'escena-3');
+        void demo.offsetWidth; // reinicia las animaciones
+        demo.classList.add(`escena-${escena + 1}`);
+
+        // La frase de debajo cambia con un pequeño fundido
+        pie.style.opacity = 0;
+        setTimeout(() => { pie.textContent = frases[escena]; pie.style.opacity = 1; }, 300);
+      });
+    })();
+
+    function continuarSinCuenta() {
+      modoInvitado = true;
+      animarEntrada = true;
+      renderizar();
+      mostrarVista();
+    }
+
+    document.addEventListener('pointerdown', (e) => {
+      if (!document.getElementById('zona-usuario').contains(e.target)) {
+        document.getElementById('menu-usuario').classList.add('hidden');
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const escribiendo = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+      const hayModal = ['modal-crear', 'modal-mover', 'modal-confirmar', 'panel-editor', 'menu-acciones', 'modal-sesion'].some(modalAbierto);
+
+      // Atajo "/" para ir al buscador, como en GitHub
+      const enPortada = document.getElementById('app').classList.contains('hidden');
+      if (e.key === '/' && !escribiendo && !hayModal && !enPortada) {
+        e.preventDefault();
+        document.getElementById('input-buscar').focus();
+        return;
+      }
+      // Escape dentro del buscador: cerrar resultados y salir de él
+      if (e.key === 'Escape' && document.activeElement.id === 'input-buscar') {
+        cerrarResultados();
+        document.activeElement.blur();
+        return;
+      }
+
+      if (e.key === 'Enter') {
+        if (modalAbierto('modal-crear')) confirmarCreacion();
+        else if (modalAbierto('modal-mover')) confirmarMover();
+      } else if (e.key === 'Escape') {
+        document.getElementById('menu-usuario').classList.add('hidden');
+        cerrarModalSesion();
+        cerrarMenuAcciones();
+        cerrarModalCrear();
+        cerrarModalMover();
+        cerrarModalConfirmar();
+        cerrarEditor();
+      }
+    });
+
+    setModoVista('lista');
+
+    if (!window.firebaseConfigurado) {
+      // Sin Firebase: se trabaja como invitado, igual que antes
+      alCambiarSesion(null);
+    } else {
+      // Con Firebase se espera a saber si hay sesión, para no mostrar un instante
+      // los archivos de invitado. Si Firebase no responde en 4 s, se sigue como invitado.
+      setTimeout(() => { if (!sesionResuelta) alCambiarSesion(null); }, 4000);
+    }
+  </script>
+
+  <!-- Firebase Authentication (se carga solo si FIREBASE_CONFIG está completo) -->
+  <script type="module">
+    if (window.firebaseConfigurado) {
+      try {
+        const VERSION = '10.12.2';
+        const { initializeApp } = await import(`https://www.gstatic.com/firebasejs/${VERSION}/firebase-app.js`);
+        const fa = await import(`https://www.gstatic.com/firebasejs/${VERSION}/firebase-auth.js`);
+
+        const auth = fa.getAuth(initializeApp(window.FIREBASE_CONFIG));
+        auth.languageCode = 'es'; // correos de Firebase y ventana de Google en español
+
+        window.servicioAuth = {
+          entrar: (correo, clave) => fa.signInWithEmailAndPassword(auth, correo, clave),
+          registrar: async (nombre, correo, clave) => {
+            const cred = await fa.createUserWithEmailAndPassword(auth, correo, clave);
+            await fa.updateProfile(cred.user, { displayName: nombre });
+            return cred;
+          },
+          google: () => fa.signInWithPopup(auth, new fa.GoogleAuthProvider()),
+          recuperar: (correo) => fa.sendPasswordResetEmail(auth, correo),
+          salir: () => fa.signOut(auth),
+        };
+
+        fa.onAuthStateChanged(auth, (usuario) => window.alCambiarSesion(usuario));
+      } catch (err) {
+        console.error('No se pudo cargar Firebase:', err);
+        window.alCambiarSesion(null);
+      }
+    }
+  </script>
+</body>
+</html>
