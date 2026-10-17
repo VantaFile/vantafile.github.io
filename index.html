@@ -404,6 +404,14 @@
       100% { left: 130%; opacity: 1; }
     }
 
+    /* --- Indicador de sincronización --- */
+    #estado-nube[data-estado="sincronizado"] .nube-icono { color: #22c55e; }
+    #estado-nube[data-estado="sincronizando"] .nube-icono,
+    #estado-nube[data-estado="descargando"] .nube-icono { color: #FFA777; animation: latidoNube 1.2s ease-in-out infinite; }
+    #estado-nube[data-estado="sinconexion"] .nube-icono { color: #94a3b8; }
+    #estado-nube[data-estado="error"] .nube-icono { color: #ef4444; }
+    @keyframes latidoNube { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.9); } }
+
     /* --- Aviso flotante --- */
     @keyframes avisoEntrada {
       from { opacity: 0; transform: translate(-50%, 12px) scale(0.97); }
@@ -674,7 +682,7 @@
           <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Buscar, más fácil que nunca
         </span>
         <span class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-brand-slate dark:border-brand-darkBorder bg-white/50 dark:bg-brand-darkSurface/50">
-          <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Almacenamiento gratis y privado
+          <span class="w-1.5 h-1.5 rounded-full bg-brand-orange"></span>Tus archivos en todos tus dispositivos
         </span>
       </div>
         </div><!-- /derecha -->
@@ -726,13 +734,30 @@
         <span class="hidden sm:inline">Iniciar sesión</span>
       </button>
 
-      <!-- Con sesión: avatar con menú (nombre, correo, cerrar sesión) -->
+      <!-- Estado de la sincronización (solo con sesión). El texto se oculta en móvil; el icono indica el estado -->
+      <div id="estado-nube" data-estado="local" class="hidden h-8 items-center gap-1.5 px-2.5 rounded-md border border-brand-slate dark:border-brand-darkBorder text-[11px] text-slate-500 dark:text-[#D7DDE3] flex">
+        <svg class="nube-icono w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
+        <span class="hidden md:inline whitespace-nowrap"></span>
+      </div>
+
+      <!-- Con sesión: avatar con menú (nombre, correo, espacio usado, cerrar sesión) -->
       <div id="zona-usuario" class="relative hidden">
         <button id="btn-usuario" type="button" onclick="toggleMenuUsuario()" title="Tu cuenta" class="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center bg-brand-orange text-brand-darkBg text-xs font-bold ring-2 ring-transparent hover:ring-brand-orange/60 transition-all active:scale-95"></button>
         <div id="menu-usuario" class="hidden absolute right-0 top-full mt-2 w-64 rounded-lg border border-brand-slate dark:border-brand-darkBorder bg-brand-cream dark:bg-brand-darkSurface shadow-2xl animate-pop overflow-hidden">
           <div class="px-4 py-3 border-b border-brand-slate dark:border-brand-darkBorder">
             <p id="menu-usuario-nombre" class="text-sm font-semibold truncate text-brand-darkBg dark:text-[#FFF7F2]"></p>
             <p id="menu-usuario-correo" class="text-xs truncate text-slate-500 dark:text-[#888888] mt-0.5"></p>
+          </div>
+          <!-- Espacio usado en la nube -->
+          <div class="px-4 py-3 border-b border-brand-slate dark:border-brand-darkBorder">
+            <div class="flex justify-between text-[11px] text-slate-500 dark:text-[#888888] mb-1.5">
+              <span>Espacio en la nube</span>
+              <span id="espacio-texto" class="font-mono"></span>
+            </div>
+            <div class="h-1.5 rounded-full bg-brand-slate/60 dark:bg-brand-darkBorder overflow-hidden">
+              <div id="espacio-barra" class="h-full rounded-full bg-brand-orange transition-all duration-500" style="width:0%"></div>
+            </div>
+            <p class="mt-1.5 text-[10px] text-slate-400 dark:text-[#777]">Máximo 5 MB por archivo.</p>
           </div>
           <button type="button" onclick="cerrarSesion()" class="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-left text-brand-darkBg dark:text-[#FFF7F2] hover:bg-brand-slate/40 dark:hover:bg-brand-darkBorder transition-colors">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
@@ -1399,8 +1424,10 @@
 
     // Guarda y vuelve a pintar; usar después de cualquier cambio en los datos
     function aplicarCambios() {
+      sistemaArchivos.modificado = Date.now(); // para saber qué dispositivo tiene el cambio más reciente
       guardarEstado();
       renderizar();
+      programarSubida(); // si hay sesión, copia el cambio a la nube
     }
 
     // -------------------------------------------------------------
@@ -1596,12 +1623,24 @@
       if (!archivos || archivos.length === 0) return;
 
       const carpetaActual = obtenerCarpetaActual();
+      // Con sesión, los archivos van a la nube gratuita: límite por archivo y espacio total por usuario
+      let espacioRestante = CUOTA_USUARIO - usoTotal();
+      const rechazados = [];
 
       Array.from(archivos).forEach(file => {
+        if (usuarioActual) {
+          if (file.size > MAX_ARCHIVO) { rechazados.push(`"${file.name}" supera ${formatearTamano(MAX_ARCHIVO)}`); return; }
+          if (file.size > espacioRestante) { rechazados.push(`"${file.name}" no cabe (espacio lleno)`); return; }
+          espacioRestante -= file.size;
+        }
+
         const esTexto = file.type.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.json') || file.name.endsWith('.md') || file.name.endsWith('.js') || file.name.endsWith('.html') || file.name.endsWith('.css');
-        
-        // Los binarios guardan el archivo original en "blob"; "contenido" solo es texto editable
+
+        // Los binarios guardan el archivo original en "blob"; "contenido" solo es texto editable.
+        // "id" y "version" sirven para sincronizarlo con la nube.
         const nuevoArchivo = {
+          id: nuevoId(),
+          version: 1,
           nombre: file.name,
           tipo: file.type || 'archivo',
           fecha: new Date(file.lastModified || Date.now()),
@@ -1633,6 +1672,9 @@
         }
       });
 
+      if (rechazados.length) {
+        mostrarAviso(rechazados.length === 1 ? rechazados[0] : `${rechazados.length} archivos no se subieron (límite de ${formatearTamano(MAX_ARCHIVO)} o espacio lleno)`);
+      }
       event.target.value = '';
     }
 
@@ -2446,7 +2488,11 @@
       preview.innerHTML = '';
       btnGuardar.classList.add('hidden');
 
-      if (elemento.urlPreview) {
+      if (!elemento.esTexto && !elemento.blob && elemento.trozos) {
+        // Está en la nube pero este dispositivo aún no lo ha descargado
+        preview.innerHTML = `<div class="text-xs text-slate-400 dark:text-[#888888] text-center">Descargando el archivo desde la nube…<br>Vuelve a abrirlo en unos segundos.</div>`;
+        preview.classList.remove('hidden');
+      } else if (elemento.urlPreview) {
         if (elemento.tipo.startsWith('image/')) {
           preview.innerHTML = `<img src="${elemento.urlPreview}" class="max-h-full max-w-full object-contain rounded">`;
           preview.classList.remove('hidden');
@@ -2471,6 +2517,7 @@
         archivoEnEdicion.contenido = document.getElementById('editor-contenido').value;
         archivoEnEdicion.tamano = new Blob([archivoEnEdicion.contenido]).size;
         archivoEnEdicion.fecha = new Date();
+        archivoEnEdicion.version = (archivoEnEdicion.version || 1) + 1; // el contenido cambió: hay que volver a subirlo
         cerrarEditor();
         aplicarCambios();
       }
@@ -2715,6 +2762,7 @@
     }
 
     function toggleMenuUsuario() {
+      actualizarEspacioUsado();
       document.getElementById('menu-usuario').classList.toggle('hidden');
     }
 
@@ -2757,6 +2805,7 @@
         return;
       }
 
+      detenerNube();
       revocarUrls(sistemaArchivos);
       claveEstado = usuario ? `usuario:${usuario.uid}` : 'raiz';
       sistemaArchivos = { nombre: NOMBRE_RAIZ, tipo: 'carpeta', contenido: [] };
@@ -2767,9 +2816,295 @@
       renderizar();
       mostrarVista();
 
+      // Con sesión, empezar a sincronizar con la nube (los invitados solo guardan en este dispositivo)
+      if (usuario) iniciarNube(usuario.uid);
+
       if (usuario) mostrarAviso(`Hola, ${usuario.displayName || usuario.email.split('@')[0]}`);
     }
     window.alCambiarSesion = alCambiarSesion;
+
+    // -------------------------------------------------------------
+    // 11. SINCRONIZACIÓN EN LA NUBE (solo con sesión iniciada)
+    // -------------------------------------------------------------
+    // Idea general:
+    //   - Los archivos siguen guardándose en el navegador (IndexedDB), y además se copian a Firestore.
+    //   - Cada archivo tiene un "id" fijo y una "version" que sube cuando cambia su contenido.
+    //     "versionSubida" indica qué versión está ya en la nube; si no coinciden, hay que subirlo.
+    //   - El árbol entero lleva la marca "modificado" (hora del último cambio).
+    //     Si dos dispositivos cambian cosas, gana el cambio más reciente.
+    //   - Firestore avisa en tiempo real cuando otro dispositivo guarda algo (onSnapshot).
+    const MAX_ARCHIVO = 5 * 1024 * 1024;     // 5 MB por archivo (cambiar aquí si se quiere otro límite)
+    const CUOTA_USUARIO = 100 * 1024 * 1024; // 100 MB por usuario
+
+    const nube = {
+      uid: null,
+      desuscribir: null,
+      remoto: new Map(),     // id → { version, trozos } de lo que hay en la nube
+      ultimaEscritura: null, // "modificado" de la última subida propia (para ignorar su eco)
+      temporizador: null,
+      subiendo: false,
+      pendiente: false,
+      descargando: 0,
+    };
+
+    const nubeActiva = () => !!(window.servicioNube && usuarioActual && nube.uid === usuarioActual.uid);
+
+    function recorrerArchivos(nodo, fn) {
+      nodo.contenido.forEach(i => (i.tipo === 'carpeta' ? recorrerArchivos(i, fn) : fn(i)));
+    }
+
+    function nuevoId() {
+      return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    // Los archivos antiguos (de antes de la sincronización) no tenían id ni versión
+    function asegurarIds(nodo) {
+      recorrerArchivos(nodo, a => {
+        if (!a.id) a.id = nuevoId();
+        if (!a.version) a.version = 1;
+      });
+    }
+
+    function usoTotal() {
+      let total = 0;
+      recorrerArchivos(sistemaArchivos, a => { total += a.tamano || 0; });
+      return total;
+    }
+
+    // Copia del árbol solo con los datos (sin contenido ni vistas previas) para guardarla en Firestore
+    function metadatos(nodo) {
+      if (nodo.tipo === 'carpeta') {
+        const copia = { nombre: nodo.nombre, tipo: 'carpeta', fecha: +new Date(nodo.fecha || 0), contenido: nodo.contenido.map(metadatos) };
+        if (nodo.modificado) copia.modificado = nodo.modificado;
+        return copia;
+      }
+      return {
+        nombre: nodo.nombre, tipo: nodo.tipo, fecha: +new Date(nodo.fecha || 0), tamano: nodo.tamano || 0,
+        esTexto: !!nodo.esTexto, id: nodo.id, version: nodo.version || 1,
+        versionSubida: nodo.versionSubida || 0, trozos: nodo.trozos || 0,
+      };
+    }
+
+    function mapaArchivos(arbol) {
+      const mapa = new Map();
+      recorrerArchivos(arbol, a => mapa.set(a.id, { version: a.version, trozos: a.trozos }));
+      return mapa;
+    }
+
+    // Contenido del archivo en bytes (los de texto se convierten desde el texto)
+    async function bytesDeArchivo(a) {
+      if (a.esTexto) return new TextEncoder().encode(a.contenido || '');
+      return new Uint8Array(await a.blob.arrayBuffer());
+    }
+
+    const tieneDatos = (a) => (a.esTexto ? typeof a.contenido === 'string' : !!a.blob);
+
+    // --- Subida (con un pequeño retraso para agrupar varios cambios seguidos en una sola subida) ---
+    function programarSubida(retraso = 800) {
+      if (!nubeActiva()) return;
+      clearTimeout(nube.temporizador);
+      nube.temporizador = setTimeout(sincronizarSubida, retraso);
+    }
+
+    async function sincronizarSubida() {
+      if (!nubeActiva()) return;
+      if (nube.subiendo) { nube.pendiente = true; return; }
+      nube.subiendo = true;
+      ponerEstadoNube('sincronizando');
+      const uid = nube.uid;
+      try {
+        asegurarIds(sistemaArchivos);
+
+        // 1. Subir el contenido de los archivos nuevos o modificados
+        const actuales = new Set();
+        const porSubir = [];
+        recorrerArchivos(sistemaArchivos, a => {
+          actuales.add(a.id);
+          if (a.versionSubida !== a.version && tieneDatos(a)) porSubir.push(a);
+        });
+        for (const a of porSubir) {
+          const anterior = nube.remoto.get(a.id);
+          const version = a.version;
+          a.trozos = await window.servicioNube.subirTrozos(uid, a.id, await bytesDeArchivo(a), anterior ? anterior.trozos : 0);
+          a.versionSubida = version;
+        }
+
+        // 2. Borrar de la nube los archivos que ya no existen
+        for (const [id, info] of nube.remoto) {
+          if (!actuales.has(id)) await window.servicioNube.borrarTrozos(uid, id, info.trozos);
+        }
+
+        // 3. Guardar el árbol (esto es lo que ven los otros dispositivos)
+        if (!sistemaArchivos.modificado) sistemaArchivos.modificado = Date.now();
+        const datos = metadatos(sistemaArchivos);
+        nube.ultimaEscritura = datos.modificado;
+        await window.servicioNube.guardarArbol(uid, datos);
+        nube.remoto = mapaArchivos(datos);
+        guardarEstado();
+        ponerEstadoNube('sincronizado');
+      } catch (err) {
+        console.error('Error al sincronizar:', err);
+        ponerEstadoNube(navigator.onLine ? 'error' : 'sinconexion', err);
+      } finally {
+        nube.subiendo = false;
+        if (nube.pendiente) { nube.pendiente = false; programarSubida(200); }
+      }
+    }
+
+    // --- Recepción: Firestore avisa cada vez que cambia el árbol en la nube ---
+    let primeraRecepcion = true;
+    async function alRecibirArbol(datos) {
+      const esPrimera = primeraRecepcion;
+      primeraRecepcion = false;
+
+      // Todavía no hay nada en la nube: subir lo que haya en este dispositivo
+      if (!datos) {
+        nube.remoto = new Map();
+        if (sistemaArchivos.contenido.length) programarSubida(0);
+        else ponerEstadoNube('sincronizado');
+        return;
+      }
+
+      // Es el "eco" de nuestra propia subida: no hay nada nuevo
+      if (datos.modificado && datos.modificado === nube.ultimaEscritura) {
+        nube.remoto = mapaArchivos(datos);
+        return;
+      }
+
+      const local = sistemaArchivos.modificado || 0;
+      const remoto = datos.modificado || 0;
+      if (esPrimera) nube.remoto = mapaArchivos(datos);
+
+      if (remoto > local) {
+        aplicarArbolRemoto(datos);
+      } else if (local > remoto) {
+        programarSubida(0); // este dispositivo tiene cambios más recientes
+      } else {
+        ponerEstadoNube('sincronizado');
+      }
+      descargarPendientes();
+    }
+
+    // Sustituye el árbol local por el de la nube, reutilizando el contenido que ya tengamos guardado
+    function aplicarArbolRemoto(datos) {
+      const cache = new Map();
+      recorrerArchivos(sistemaArchivos, a => cache.set(a.id, a));
+
+      const nuevo = JSON.parse(JSON.stringify(datos));
+      const reutilizados = new Set();
+      recorrerArchivos(nuevo, a => {
+        const previo = cache.get(a.id);
+        if (previo && previo.version === a.version && tieneDatos(previo)) {
+          a.contenido = previo.contenido;
+          a.blob = previo.blob;
+          a.urlPreview = previo.urlPreview;
+          reutilizados.add(previo);
+        }
+      });
+      cache.forEach(a => { if (!reutilizados.has(a) && a.urlPreview) URL.revokeObjectURL(a.urlPreview); });
+
+      sistemaArchivos = nuevo;
+      nube.remoto = mapaArchivos(datos);
+
+      // Si la carpeta abierta ya no existe (la borró otro dispositivo), volver a la principal
+      let cursor = sistemaArchivos;
+      for (const idx of rutaActual) {
+        const sig = cursor.contenido[idx];
+        if (!sig || sig.tipo !== 'carpeta') { rutaActual = []; break; }
+        cursor = sig;
+      }
+
+      guardarEstado();
+      renderizar();
+      ponerEstadoNube('sincronizado');
+    }
+
+    // Descarga el contenido de los archivos que están en la nube pero no en este dispositivo
+    async function descargarPendientes() {
+      if (!nubeActiva()) return;
+      const uid = nube.uid;
+      const faltan = [];
+      recorrerArchivos(sistemaArchivos, a => {
+        if (!tieneDatos(a) && a.trozos && a.versionSubida === a.version) faltan.push(a);
+      });
+      if (!faltan.length) return;
+
+      nube.descargando += faltan.length;
+      ponerEstadoNube('descargando');
+      for (const a of faltan) {
+        try {
+          const bytes = await window.servicioNube.descargarTrozos(uid, a.id, a.trozos);
+          if (a.esTexto) a.contenido = new TextDecoder().decode(bytes);
+          else { a.blob = new Blob([bytes], { type: a.tipo }); crearUrlPreview(a); }
+        } catch (err) {
+          console.error('No se pudo descargar', a.nombre, err);
+        }
+        nube.descargando--;
+        guardarEstado();
+        renderizar();
+      }
+      ponerEstadoNube(nube.descargando ? 'descargando' : 'sincronizado');
+    }
+
+    function iniciarNube(uid) {
+      detenerNube();
+      if (!window.servicioNube) return;
+      nube.uid = uid;
+      nube.remoto = new Map();
+      primeraRecepcion = true;
+      asegurarIds(sistemaArchivos);
+      ponerEstadoNube('sincronizando');
+      nube.desuscribir = window.servicioNube.escucharArbol(uid, alRecibirArbol, (err) => {
+        console.error('Error de sincronización:', err);
+        ponerEstadoNube(navigator.onLine ? 'error' : 'sinconexion', err);
+      });
+    }
+
+    function detenerNube() {
+      if (nube.desuscribir) nube.desuscribir();
+      clearTimeout(nube.temporizador);
+      Object.assign(nube, { uid: null, desuscribir: null, remoto: new Map(), ultimaEscritura: null, subiendo: false, pendiente: false, descargando: 0 });
+      ponerEstadoNube('local');
+    }
+
+    // Al recuperar la conexión, subir lo que haya quedado pendiente
+    window.addEventListener('online', () => programarSubida(0));
+    window.addEventListener('offline', () => { if (nubeActiva()) ponerEstadoNube('sinconexion'); });
+
+    // --- Indicador de estado (junto al avatar) y espacio usado (menú de la cuenta) ---
+    function ponerEstadoNube(estado, err) {
+      const chip = document.getElementById('estado-nube');
+      if (!chip) return;
+      const textos = {
+        sincronizando: 'Sincronizando…',
+        descargando: 'Descargando…',
+        sincronizado: 'Sincronizado',
+        sinconexion: 'Sin conexión',
+        error: 'Error al sincronizar',
+      };
+      chip.classList.toggle('hidden', estado === 'local');
+      chip.dataset.estado = estado;
+      chip.querySelector('span').textContent = textos[estado] || '';
+
+      let detalle = textos[estado] || '';
+      if (estado === 'sinconexion') detalle = 'Sin conexión: los cambios se subirán al volver internet';
+      if (estado === 'error' && err && err.code === 'permission-denied') detalle = 'Firestore rechazó el acceso: revisa las reglas de seguridad';
+      else if (estado === 'error' && err && (err.code === 'not-found' || err.code === 'failed-precondition')) detalle = 'Firestore no está activado en el proyecto de Firebase';
+      chip.title = detalle;
+      actualizarEspacioUsado();
+    }
+
+    function actualizarEspacioUsado() {
+      const texto = document.getElementById('espacio-texto');
+      const barra = document.getElementById('espacio-barra');
+      if (!texto || !barra) return;
+      const uso = usoTotal();
+      const pct = Math.min(100, (uso / CUOTA_USUARIO) * 100);
+      texto.textContent = `${formatearTamano(uso)} de ${formatearTamano(CUOTA_USUARIO)}`;
+      barra.style.width = `${pct}%`;
+      barra.classList.toggle('bg-red-500', pct >= 90);
+      barra.classList.toggle('bg-brand-orange', pct < 90);
+    }
 
     // -------------------------------------------------------------
     // 10. PORTADA / APLICACIÓN
@@ -2884,16 +3219,68 @@
     }
   </script>
 
-  <!-- Firebase Authentication (se carga solo si FIREBASE_CONFIG está completo) -->
+  <!-- Firebase: inicio de sesión (Authentication) y sincronización (Firestore).
+       Se carga solo si FIREBASE_CONFIG está completo. -->
   <script type="module">
     if (window.firebaseConfigurado) {
       try {
         const VERSION = '10.12.2';
         const { initializeApp } = await import(`https://www.gstatic.com/firebasejs/${VERSION}/firebase-app.js`);
         const fa = await import(`https://www.gstatic.com/firebasejs/${VERSION}/firebase-auth.js`);
+        const fs = await import(`https://www.gstatic.com/firebasejs/${VERSION}/firebase-firestore.js`);
 
-        const auth = fa.getAuth(initializeApp(window.FIREBASE_CONFIG));
+        const app = initializeApp(window.FIREBASE_CONFIG);
+        const auth = fa.getAuth(app);
         auth.languageCode = 'es'; // correos de Firebase y ventana de Google en español
+        const db = fs.getFirestore(app);
+
+        // --- Sincronización en Firestore (plan gratuito, sin Cloud Storage) ---
+        // Estructura:
+        //   usuarios/{uid}/estado/arbol   → carpetas y datos de cada archivo (sin el contenido)
+        //   usuarios/{uid}/trozos/{id}_{n} → el contenido de cada archivo, partido en trozos de 900 KB
+        //                                    (cada documento de Firestore admite como máximo 1 MiB)
+        const TAM_TROZO = 900 * 1024;
+        const refArbol = (uid) => fs.doc(db, 'usuarios', uid, 'estado', 'arbol');
+        const refTrozo = (uid, id, n) => fs.doc(db, 'usuarios', uid, 'trozos', `${id}_${n}`);
+
+        window.servicioNube = {
+          // Escucha el árbol en tiempo real; devuelve la función para dejar de escuchar
+          escucharArbol: (uid, alCambiar, alFallar) =>
+            fs.onSnapshot(refArbol(uid), (snap) => alCambiar(snap.exists() ? snap.data() : null), alFallar),
+
+          guardarArbol: (uid, datos) => fs.setDoc(refArbol(uid), datos),
+
+          // Sube el contenido en trozos (todos en un solo lote) y borra los trozos sobrantes
+          // de una versión anterior más grande. Devuelve cuántos trozos ocupa.
+          subirTrozos: async (uid, id, bytes, trozosAnteriores = 0) => {
+            const n = Math.max(1, Math.ceil(bytes.length / TAM_TROZO));
+            const lote = fs.writeBatch(db);
+            for (let i = 0; i < n; i++) {
+              const parte = bytes.subarray(i * TAM_TROZO, (i + 1) * TAM_TROZO);
+              lote.set(refTrozo(uid, id, i), { datos: fs.Bytes.fromUint8Array(parte) });
+            }
+            for (let i = n; i < trozosAnteriores; i++) lote.delete(refTrozo(uid, id, i));
+            await lote.commit();
+            return n;
+          },
+
+          // Descarga todos los trozos y los vuelve a unir
+          descargarTrozos: async (uid, id, n) => {
+            const snaps = await Promise.all(Array.from({ length: n }, (_, i) => fs.getDoc(refTrozo(uid, id, i))));
+            const partes = snaps.map(s => (s.exists() ? s.data().datos.toUint8Array() : new Uint8Array()));
+            const total = new Uint8Array(partes.reduce((s, p) => s + p.length, 0));
+            let pos = 0;
+            partes.forEach(p => { total.set(p, pos); pos += p.length; });
+            return total;
+          },
+
+          borrarTrozos: async (uid, id, n) => {
+            if (!n) return;
+            const lote = fs.writeBatch(db);
+            for (let i = 0; i < n; i++) lote.delete(refTrozo(uid, id, i));
+            await lote.commit();
+          },
+        };
 
         window.servicioAuth = {
           entrar: (correo, clave) => fa.signInWithEmailAndPassword(auth, correo, clave),
